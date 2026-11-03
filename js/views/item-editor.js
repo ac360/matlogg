@@ -1,19 +1,30 @@
 // Ett redigerbart kort för en loggad sak: välj livsmedel, mängd och värden innan det sparas.
-// Används både vid ny loggning och när en befintlig post redigeras.
+// Används vid ny loggning, när en post redigeras och för ingredienser i recept.
+//
+// Lägen (item.mode):
+//   food        livsmedel valt ur registret (SLV, baslista, eget, recept)
+//   fixed       sparad post utan kopplat livsmedel (värden för hand eller en del av en AI-uppdelning)
+//   choose      flera träffar, användaren väljer
+//   none        inga träffar
+//   manual      användaren skriver in värden
+//   ai-loading  väntar på AI
+//   ai          AI-uppskattning visas
 
-import { esc, h, num } from '../ui.js';
+import { esc, h, num, toast } from '../ui.js';
 import { normalize } from '../text.js';
 import * as foods from '../foods.js';
-import { toGrams, unitOptions } from '../portions.js';
-import { KEYS, LABELS, scale, scaleBy, fmt, fmtIn } from '../nutrition.js';
+import * as ai from '../ai/provider.js';
+import { searchProducts } from '../off.js';
+import { toGrams, unitOptions, PIECE_UNITS } from '../portions.js';
+import { KEYS, LABELS, scale, scaleBy, sum, fmt, fmtIn } from '../nutrition.js';
 import { UNIT_LABELS, parseLine } from '../parser.js';
 
 const MASS_UNITS = { g: 1, hg: 100, kg: 1000 };
 
 // ---- Skapa tillstånd ----
 
-export async function itemFromParsed(parsed) {
-  const item = {
+function baseItem(parsed) {
+  return {
     input: parsed.raw,
     query: parsed.name,
     queryWords: normalize(parsed.name),
@@ -31,11 +42,19 @@ export async function itemFromParsed(parsed) {
     override: false,
     manual: null,
   };
-  const res = await foods.resolve(parsed.name);
+}
+
+export async function itemFromParsed(parsed) {
+  const item = baseItem(parsed);
+  const res = await foods.resolve(parsed.name, { preferRecipe: /matlåd|låd(a|or)\b/i.test(parsed.raw) });
   item.candidates = res.candidates;
   item.remembered = res.remembered;
   if (res.chosen) applyFood(item, res.chosen);
   else item.mode = res.candidates.length ? 'choose' : 'none';
+  if (item.mode === 'none') {
+    const cfg = await ai.getConfig();
+    item.autoAi = !!cfg.apiKey && cfg.auto;
+  }
   return item;
 }
 
@@ -67,9 +86,33 @@ export function applyFood(item, food) {
   item.food = food;
   item.mode = 'food';
   item.override = false;
+  item.ai = null;
   const r = toGrams(food, item.parsedQty, item.parsedUnit, { size: item.size, queryWords: item.queryWords });
   Object.assign(item, { qty: r.qty, unit: r.unit, grams: Math.round(r.grams), approx: r.approx });
   item.nutrients = scale(food.per100, item.grams);
+}
+
+function isPiece(unit) {
+  return unit && PIECE_UNITS.includes(unit);
+}
+
+function applyAi(item, res) {
+  item.ai = res;
+  item.food = null;
+  item.mode = 'ai';
+  item.name = res.name;
+  item.override = false;
+  item.estimated = true;
+  item.approx = false;
+  item.grams = res.items.reduce((s, p) => s + p.grams, 0);
+  item.nutrients = sum(res.items);
+  if (isPiece(item.parsedUnit) || (!item.parsedUnit && item.parsedQty)) {
+    item.qty = item.parsedQty || 1;
+    item.unit = item.parsedUnit || 'portion';
+  } else {
+    item.qty = item.grams;
+    item.unit = 'g';
+  }
 }
 
 function setGrams(item, grams) {
@@ -93,38 +136,73 @@ function recalcFromQty(item) {
   setGrams(item, Math.round(r.grams));
 }
 
-// Gör om kortets tillstånd till fält för en post. Returnerar null om något saknas.
+// Gör om kortets tillstånd till fält för en post (eller { error }).
+// Egna livsmedel (för hand eller från AI) sparas här, en gång per kort.
 export async function toEntryFields(item) {
   if (item.mode === 'choose' || item.mode === 'none') return { error: `Välj livsmedel för ”${item.query}”.` };
+  if (item.mode === 'ai-loading') return { error: 'Vänta tills AI:n har svarat.' };
+
   if (item.mode === 'manual') {
     const m = item.manual;
     if (!m.name.trim()) return { error: 'Ange ett namn.' };
     if (!(m.grams > 0)) return { error: `Ange mängd i gram för ”${m.name}”.` };
-    let foodRef = null;
-    if (m.saveAsFood) {
+    let foodRef = item.savedFoodRef || null;
+    if (m.saveAsFood && !foodRef) {
       const units = {};
-      if (item.parsedUnit && !MASS_UNITS[item.parsedUnit] && item.parsedQty > 0) units[item.parsedUnit] = m.grams / item.parsedQty;
+      if (isPiece(item.parsedUnit) && item.parsedQty > 0) units[item.parsedUnit] = m.grams / item.parsedQty;
       const food = await foods.saveCustomFood({
         name: m.name.trim(),
         per100g: scaleBy(m.values, 100 / m.grams),
         units,
         source: 'manual',
+        aliases: item.query && item.query !== m.name.trim().toLowerCase() ? [item.query] : undefined,
       });
-      foodRef = food.ref;
+      foodRef = item.savedFoodRef = food.ref;
     }
-    const isMass = !item.parsedUnit || MASS_UNITS[item.parsedUnit];
+    const piece = isPiece(item.parsedUnit);
     return {
       input: item.input,
       name: m.name.trim(),
       foodRef,
-      qty: isMass ? m.grams : item.parsedQty ?? 1,
-      unit: isMass ? 'g' : item.parsedUnit,
+      qty: piece ? item.parsedQty ?? 1 : m.grams,
+      unit: piece ? item.parsedUnit : 'g',
       grams: m.grams,
       nutrients: { ...m.values },
       override: !foodRef,
       estimated: false,
     };
   }
+
+  if (item.mode === 'ai') {
+    if (!(item.grams > 0)) return { error: `Ange mängd för ”${item.name}”.` };
+    let foodRef = item.savedFoodRef || null;
+    if (!foodRef) {
+      const units = { portion: item.grams / (isPiece(item.unit) ? item.qty || 1 : 1) };
+      if (isPiece(item.unit) && item.qty > 0) units[item.unit] = item.grams / item.qty;
+      const food = await foods.saveCustomFood({
+        name: item.name,
+        per100g: scaleBy(item.nutrients, 100 / item.grams),
+        units,
+        source: 'ai',
+        aliases: item.query ? [item.query] : undefined,
+        aiReason: item.ai?.reason,
+        components: item.ai?.items,
+      });
+      foodRef = item.savedFoodRef = food.ref;
+    }
+    return {
+      input: item.input,
+      name: item.name,
+      foodRef,
+      qty: item.qty,
+      unit: item.unit,
+      grams: item.grams,
+      nutrients: { ...item.nutrients },
+      override: item.override,
+      estimated: true,
+    };
+  }
+
   return {
     input: item.input,
     name: item.food ? item.food.name : item.name,
@@ -140,10 +218,15 @@ export async function toEntryFields(item) {
 
 // ---- Rendering ----
 
-function sourceBadge(food) {
-  if (!food) return '<span class="badge">Egen post</span>';
-  if (food.ref.source === 'slv') return '<span class="badge">Livsmedelsverket</span>';
-  if (food.estimated) return '<span class="badge badge-warn">Uppskattning</span>';
+export function sourceBadge(food, estimated = false) {
+  if (!food) return estimated ? '<span class="badge badge-warn">Uppskattning</span>' : '<span class="badge">Egen post</span>';
+  switch (food.ref.source) {
+    case 'slv': return '<span class="badge">Livsmedelsverket</span>';
+    case 'base': return '<span class="badge badge-muted">Typvärde</span>';
+    case 'recipe': return '<span class="badge">Recept</span>';
+  }
+  if (food.origin === 'ai') return '<span class="badge badge-warn">Uppskattning (AI)</span>';
+  if (food.origin === 'off') return '<span class="badge">Open Food Facts</span>';
   return '<span class="badge">Eget livsmedel</span>';
 }
 
@@ -153,18 +236,38 @@ function nutrLine(n) {
     <span>K ${fmt(n.carbs, 1)}</span><span>F ${fmt(n.fat, 1)}</span><span class="fiber">fiber ${fmt(n.fiber, 1)}</span>`;
 }
 
+function sourceSuffix(food) {
+  if (food.ref.source === 'base') return ' · typvärde';
+  if (food.ref.source === 'recipe') return ' · recept';
+  if (food.origin === 'ai') return ' · AI';
+  if (food.origin === 'off') return food.brand ? ` · ${food.brand}` : ' · OFF';
+  if (food.ref.source === 'custom') return ' · eget';
+  return '';
+}
+
 function candidateButton(food) {
   const p = food.per100;
+  const meta = food.recipe && food.units?.portion
+    ? `${fmt((p.kcal * food.units.portion) / 100)} kcal · ${fmt((p.protein * food.units.portion) / 100, 1)} g protein / portion`
+    : `${fmt(p.kcal)} kcal · ${fmt(p.protein, 1)} g protein / 100 g`;
   return `<button type="button" class="choice" data-key="${esc(food.key)}">
     <span class="choice-name">${esc(food.name)}</span>
-    <span class="choice-meta">${fmt(p.kcal)} kcal · ${fmt(p.protein, 1)} g protein / 100 g${food.ref.source !== 'slv' ? ' · eget' : ''}</span>
+    <span class="choice-meta">${meta}${esc(sourceSuffix(food))}</span>
   </button>`;
 }
 
-export function createItemEditor(item, { onChange = () => {}, onRemove, removable = true } = {}) {
+function offButton(p, i) {
+  return `<button type="button" class="choice off-choice" data-off="${i}">
+    <span class="choice-name">${esc(p.name)}${p.brand ? ` <span class="choice-brand">${esc(p.brand)}</span>` : ''}</span>
+    <span class="choice-meta">${fmt(p.per100g.kcal)} kcal · ${fmt(p.per100g.protein, 1)} g protein / 100 g</span>
+  </button>`;
+}
+
+export function createItemEditor(item, { onChange = () => {}, onRemove, onSplit, removable = true, allowAi = true } = {}) {
   const el = h('<div class="item card"></div>');
   let candidateMap = new Map();
   let prevMode = null;
+  let aiCtrl = null;
 
   const changed = () => onChange(item);
 
@@ -178,9 +281,33 @@ export function createItemEditor(item, { onChange = () => {}, onRemove, removabl
     let body = '';
     if (item.mode === 'food' || item.mode === 'fixed') body = renderFood();
     else if (item.mode === 'manual') body = renderManual();
+    else if (item.mode === 'ai-loading') body = renderAiLoading();
+    else if (item.mode === 'ai') body = renderAi();
     else body = renderChoose();
     el.innerHTML = head + body;
     bind();
+  }
+
+  function amountRow(units) {
+    return `
+      <div class="item-amount">
+        <input class="qty" type="text" inputmode="decimal" value="${fmtIn(item.qty, 2)}" aria-label="Mängd">
+        <select class="unit" aria-label="Enhet">${units.map(u => `<option value="${u}" ${u === item.unit ? 'selected' : ''}>${UNIT_LABELS[u] || u}</option>`).join('')}</select>
+        <span class="eq">=</span>
+        <input class="grams" type="text" inputmode="decimal" value="${fmtIn(item.grams, 0)}" aria-label="Gram">
+        <span class="unit-g">g</span>
+      </div>`;
+  }
+
+  function valuesEditor(resetLabel) {
+    return `
+      <details class="values-editor">
+        <summary>Ändra värden</summary>
+        <div class="values-grid">
+          ${KEYS.map(k => `<label><span>${LABELS[k]}</span><input data-k="${k}" type="text" inputmode="decimal" value="${fmtIn(item.nutrients[k], 1)}"></label>`).join('')}
+        </div>
+        ${resetLabel ? `<button type="button" class="btn-text reset-values">${resetLabel}</button>` : ''}
+      </details>`;
   }
 
   function renderFood() {
@@ -190,40 +317,74 @@ export function createItemEditor(item, { onChange = () => {}, onRemove, removabl
     return `
       <button type="button" class="item-food">
         <span class="item-name">${esc(name)}</span>
-        <span class="item-food-meta">${sourceBadge(item.food)}${item.mode === 'food' ? '<span class="change">Byt</span>' : ''}</span>
+        <span class="item-food-meta">${sourceBadge(item.food, item.estimated)}${item.mode === 'food' ? '<span class="change">Byt</span>' : ''}</span>
       </button>
-      <div class="item-amount">
-        <input class="qty" type="text" inputmode="decimal" value="${fmtIn(item.qty, 2)}" aria-label="Mängd">
-        <select class="unit" aria-label="Enhet">${units.map(u => `<option value="${u}" ${u === item.unit ? 'selected' : ''}>${UNIT_LABELS[u] || u}</option>`).join('')}</select>
-        <span class="eq">=</span>
-        <input class="grams" type="text" inputmode="decimal" value="${fmtIn(item.grams, 0)}" aria-label="Gram">
-        <span class="unit-g">g</span>
-      </div>
+      ${amountRow(units)}
       <div class="item-nutr">${nutrLine(item.nutrients)}</div>
       ${item.approx ? '<p class="note">≈ Vikten är en uppskattning. Justera gram om du vet bättre.</p>' : ''}
       ${item.override ? '<p class="note">Värdena är ändrade för hand.</p>' : ''}
-      ${item.food?.estimated ? '<p class="note warn">Värdena är en uppskattning, inte uppmätta.</p>' : ''}
-      <details class="values-editor">
-        <summary>Ändra värden</summary>
-        <div class="values-grid">
-          ${KEYS.map(k => `<label><span>${LABELS[k]}</span><input data-k="${k}" type="text" inputmode="decimal" value="${fmtIn(item.nutrients[k], 1)}"></label>`).join('')}
-        </div>
-        ${item.override && item.food ? '<button type="button" class="btn-text reset-values">Återställ till databasens värden</button>' : ''}
-      </details>`;
+      ${item.food?.typical ? '<p class="note">Typiskt värde för produkttypen. Ditt märke kan skilja sig något.</p>' : ''}
+      ${item.food?.estimated ? `<p class="note warn">AI-uppskattning, inte uppmätta värden.${item.food.aiReason ? ' ' + esc(item.food.aiReason) : ''}</p>` : ''}
+      ${!item.food && item.estimated ? '<p class="note warn">Uppskattade värden.</p>' : ''}
+      ${valuesEditor(item.override && item.food ? 'Återställ till databasens värden' : '')}`;
+  }
+
+  function renderAi() {
+    const a = item.ai;
+    const units = [item.unit];
+    return `
+      <div class="item-food static">
+        <span class="item-name">${esc(item.name)}</span>
+        <span class="item-food-meta"><span class="badge badge-warn">Uppskattning (AI)</span><span class="conf">Säkerhet: ${esc(a.confidence)}</span></span>
+      </div>
+      ${amountRow(units)}
+      <div class="item-nutr">${nutrLine(item.nutrients)}</div>
+      ${a.reason ? `<p class="note warn">${esc(a.reason)}</p>` : ''}
+      ${a.items.length > 1 ? `
+        <details class="ai-parts">
+          <summary>Uppdelning (${a.items.length} delar)</summary>
+          <ul>${a.items.map(p => `<li><span>${esc(p.name)}</span><span>${fmt(p.grams)} g · ${fmt(p.kcal)} kcal · ${fmt(p.protein, 1)} g prot</span></li>`).join('')}</ul>
+        </details>` : ''}
+      ${valuesEditor('')}
+      <div class="row-actions wrap">
+        ${a.items.length > 1 && onSplit ? '<button type="button" class="btn-text ai-split">Dela upp i rader</button>' : ''}
+        <button type="button" class="btn-text ai-again">Fråga igen</button>
+        <button type="button" class="btn-text ai-back">Sök i databasen</button>
+      </div>`;
+  }
+
+  function renderAiLoading() {
+    return `
+      <div class="ai-loading">
+        <span class="spinner" aria-hidden="true"></span>
+        <span>AI uppskattar ”${esc(item.input || item.query)}”…</span>
+      </div>
+      <div class="row-actions"><button type="button" class="btn-text ai-cancel">Avbryt</button></div>`;
   }
 
   function renderChoose() {
     const isNone = !item.candidates.length;
     const canCancel = prevMode === 'food' && item.food;
+    const off = item.off || {};
     return `
       ${isNone
-        ? `<p class="item-q">Hittade inget för ”${esc(item.query)}” i Livsmedelsverkets databas.</p>`
+        ? `<p class="item-q">Hittade inget för ”${esc(item.query)}” i databasen.</p>`
         : `<p class="item-q">Vilken menar du med ”${esc(item.query)}”?</p>`}
+      ${item.aiError ? `<p class="note error-note">${esc(item.aiError)}</p>` : ''}
       <div class="choices">${item.candidates.slice(0, 5).map(candidateButton).join('')}</div>
       <div class="search-row">
         <input class="search" type="search" placeholder="Sök på annat namn…" enterkeyhint="search" autocomplete="off">
       </div>
       <div class="choices search-results"></div>
+      <div class="alt-actions">
+        ${allowAi ? '<button type="button" class="btn secondary small ask-ai">✦ Fråga AI</button>' : ''}
+        <button type="button" class="btn secondary small off-search">Sök märkesvaror</button>
+      </div>
+      ${off.status === 'loading' ? '<p class="hint"><span class="spinner small"></span> Söker i Open Food Facts…</p>' : ''}
+      ${off.status === 'error' ? `<p class="note error-note">${esc(off.error)}</p>` : ''}
+      ${off.status === 'done' ? (off.results.length
+        ? `<p class="hint off-hint">Från Open Food Facts (öppen databas, värden per 100 g):</p><div class="choices">${off.results.map(offButton).join('')}</div>`
+        : '<p class="hint">Inga märkesvaror hittades.</p>') : ''}
       <div class="row-actions">
         <button type="button" class="btn-text go-manual">Skriv in värden själv</button>
         ${canCancel ? '<button type="button" class="btn-text cancel-choose">Avbryt</button>' : ''}
@@ -254,10 +415,74 @@ export function createItemEditor(item, { onChange = () => {}, onRemove, removabl
     changed();
   }
 
-  function bind() {
-    el.querySelector('.item-remove')?.addEventListener('click', () => onRemove?.(item));
+  function choose(food) {
+    if (!item.candidates.some(f => f.key === food.key)) item.candidates = [food, ...item.candidates];
+    applyFood(item, food);
+    item.userChose = true;
+    item.aiError = null;
+    render();
+    changed();
+  }
 
-    el.querySelector('.item-food')?.addEventListener('click', () => {
+  async function askAi(fresh = false) {
+    const cfg = await ai.getConfig();
+    if (!cfg.apiKey) {
+      item.aiError = 'Lägg in din Gemini-nyckel under Inställningar → AI för att använda AI-uppskattning.';
+      if (item.mode !== 'choose' && item.mode !== 'none') item.mode = item.candidates.length ? 'choose' : 'none';
+      render();
+      return;
+    }
+    const back = item.mode === 'ai' ? (item.candidates.length ? 'choose' : 'none') : item.mode;
+    item.aiPrevMode = back === 'food' ? 'choose' : back;
+    item.aiError = null;
+    item.mode = 'ai-loading';
+    render();
+    changed();
+    aiCtrl = new AbortController();
+    try {
+      const res = await ai.estimate(item.input || item.query, { signal: aiCtrl.signal, fresh });
+      applyAi(item, res);
+      item.savedFoodRef = null;
+    } catch (err) {
+      if (item.mode !== 'ai-loading') return; // avbrutet
+      item.aiError = ai.errorText(err);
+      item.mode = item.candidates.length ? 'choose' : 'none';
+    } finally {
+      aiCtrl = null;
+    }
+    render();
+    changed();
+  }
+
+  async function searchOff() {
+    const term = el.querySelector('.search')?.value.trim() || item.query;
+    item.off = { status: 'loading' };
+    render();
+    try {
+      const results = await searchProducts(term);
+      item.off = { status: 'done', results };
+    } catch (err) {
+      item.off = { status: 'error', error: err.message || 'Sökningen misslyckades.' };
+    }
+    render();
+  }
+
+  async function chooseOff(p) {
+    let food = await foods.findCustomByBarcode(p.code);
+    if (!food) {
+      food = await foods.saveCustomFood({
+        name: p.name, per100g: p.per100g, units: p.units, source: 'off',
+        barcode: p.code, brand: p.brand || undefined, aliases: [item.query],
+      });
+    }
+    item.off = null;
+    choose(food);
+  }
+
+  function bind() {
+    el.querySelector('.item-remove')?.addEventListener('click', () => { aiCtrl?.abort(); onRemove?.(item); });
+
+    el.querySelector('button.item-food')?.addEventListener('click', () => {
       if (item.mode !== 'food') return;
       prevMode = 'food';
       if (!item.candidates.length) item.candidates = foods.search(item.query, { limit: 6 }).map(r => r.food);
@@ -269,8 +494,14 @@ export function createItemEditor(item, { onChange = () => {}, onRemove, removabl
     qty?.addEventListener('input', () => {
       const v = num(qty.value);
       if (v == null) return;
+      const old = item.qty;
       item.qty = v;
-      recalcFromQty(item);
+      if (item.mode === 'ai' && !MASS_UNITS[item.unit]) {
+        // "2 portioner" i stället för 1: skala hela uppskattningen.
+        if (old > 0) setGrams(item, Math.round((item.grams * v) / old));
+      } else {
+        recalcFromQty(item);
+      }
       const g = el.querySelector('.grams');
       if (g) g.value = fmtIn(item.grams, 0);
       updateNumbers();
@@ -288,15 +519,17 @@ export function createItemEditor(item, { onChange = () => {}, onRemove, removabl
     grams?.addEventListener('input', () => {
       const v = num(grams.value);
       if (v == null) return;
-      // Gram skrivna för hand gäller: byt till enheten gram.
-      item.unit = 'g';
-      item.qty = v;
       item.approx = false;
       setGrams(item, v);
-      const q = el.querySelector('.qty');
-      if (q) q.value = fmtIn(v, 2);
-      const u = el.querySelector('.unit');
-      if (u) u.value = 'g';
+      if (item.mode !== 'ai' || MASS_UNITS[item.unit]) {
+        // Gram skrivna för hand gäller: byt till enheten gram.
+        item.unit = 'g';
+        item.qty = v;
+        const q = el.querySelector('.qty');
+        if (q) q.value = fmtIn(v, 2);
+        const u = el.querySelector('.unit');
+        if (u && [...u.options].some(o => o.value === 'g')) u.value = 'g';
+      }
       updateNumbers();
     });
 
@@ -318,14 +551,13 @@ export function createItemEditor(item, { onChange = () => {}, onRemove, removabl
       changed();
     });
 
-    el.querySelectorAll('.choice').forEach(btn => btn.addEventListener('click', () => {
+    el.querySelectorAll('.choice:not(.off-choice)').forEach(btn => btn.addEventListener('click', () => {
       const food = candidateMap.get(btn.dataset.key);
-      if (!food) return;
-      if (!item.candidates.some(f => f.key === food.key)) item.candidates = [food, ...item.candidates];
-      applyFood(item, food);
-      item.userChose = true;
-      render();
-      changed();
+      if (food) choose(food);
+    }));
+    el.querySelectorAll('.off-choice').forEach(btn => btn.addEventListener('click', () => {
+      const p = item.off?.results?.[Number(btn.dataset.off)];
+      if (p) chooseOff(p).catch(err => toast('Kunde inte spara produkten: ' + err.message));
     }));
 
     const search = el.querySelector('.search');
@@ -339,20 +571,45 @@ export function createItemEditor(item, { onChange = () => {}, onRemove, removabl
           if (!q) { box.innerHTML = ''; return; }
           const results = foods.search(q, { limit: 6 }).map(r => r.food);
           for (const f of results) candidateMap.set(f.key, f);
-          box.innerHTML = results.length ? results.map(candidateButton).join('') : '<p class="hint">Inga träffar.</p>';
+          box.innerHTML = results.length ? results.map(candidateButton).join('') : '<p class="hint">Inga träffar. Prova märkesvaror eller AI nedan.</p>';
           box.querySelectorAll('.choice').forEach(btn => btn.addEventListener('click', () => {
             const food = candidateMap.get(btn.dataset.key);
             item.candidates = [food, ...item.candidates.filter(f => f.key !== food.key)];
-            applyFood(item, food);
-            item.userChose = true;
-            render();
-            changed();
+            choose(food);
           }));
         }, 150);
       });
     }
 
     el.querySelector('.cancel-choose')?.addEventListener('click', () => { item.mode = 'food'; render(); });
+    el.querySelector('.ask-ai')?.addEventListener('click', () => askAi());
+    el.querySelector('.ai-again')?.addEventListener('click', () => askAi(true));
+    el.querySelector('.off-search')?.addEventListener('click', searchOff);
+    el.querySelector('.ai-cancel')?.addEventListener('click', () => {
+      aiCtrl?.abort();
+      item.mode = item.aiPrevMode || 'none';
+      render();
+      changed();
+    });
+    el.querySelector('.ai-back')?.addEventListener('click', () => {
+      item.mode = item.candidates.length ? 'choose' : 'none';
+      render();
+      changed();
+    });
+    el.querySelector('.ai-split')?.addEventListener('click', () => {
+      const parts = item.ai.items.map(p => ({
+        input: `${item.input} → ${p.name}`,
+        name: p.name,
+        foodRef: null,
+        qty: p.grams,
+        unit: 'g',
+        grams: p.grams,
+        nutrients: { kcal: p.kcal, protein: p.protein, carbs: p.carbs, fat: p.fat, fiber: p.fiber },
+        override: true,
+        estimated: true,
+      }));
+      onSplit?.(item, parts);
+    });
 
     el.querySelector('.go-manual')?.addEventListener('click', () => {
       const isMass = !item.parsedUnit || MASS_UNITS[item.parsedUnit];
@@ -385,12 +642,16 @@ export function createItemEditor(item, { onChange = () => {}, onRemove, removabl
   }
 
   render();
+  if (item.autoAi && allowAi) {
+    item.autoAi = false;
+    askAi();
+  }
   return { el, item, render };
 }
 
-// Näringsvärden som kortet bidrar med just nu (för summeringen i arket).
+// Näringsvärden som kortet bidrar med just nu (för summeringen).
 export function currentNutrients(item) {
   if (item.mode === 'manual') return item.manual.values;
-  if (item.mode === 'food' || item.mode === 'fixed') return item.nutrients;
+  if (item.mode === 'food' || item.mode === 'fixed' || item.mode === 'ai') return item.nutrients;
   return null;
 }

@@ -6,15 +6,17 @@ import * as foods from '../foods.js';
 import { ACTIVITY_LEVELS, GOAL_TYPES, DEFAULT_GOALS, suggestGoals } from '../goals.js';
 import { KEYS, LABELS, UNITS, fmtIn, isoDate } from '../nutrition.js';
 import { APP_VERSION } from '../version.js';
+import * as ai from '../ai/provider.js';
 
 const DEFAULT_PROFILE = { sex: 'male', age: null, weight: null, height: null, activity: 'moderate', goal: 'leanbulk' };
 
 export async function renderSettings(main) {
-  const [profile, goals, lastBackup, persisted] = await Promise.all([
+  const [profile, goals, lastBackup, persisted, aiCfg] = await Promise.all([
     db.getSetting('profile', DEFAULT_PROFILE),
     db.getSetting('goals', DEFAULT_GOALS),
     db.getSetting('lastBackup'),
     navigator.storage?.persisted ? navigator.storage.persisted() : Promise.resolve(null),
+    ai.getConfig(),
   ]);
   const p = { ...DEFAULT_PROFILE, ...profile };
   const g = { ...DEFAULT_GOALS, ...goals };
@@ -52,6 +54,31 @@ export async function renderSettings(main) {
       </section>
 
       <section>
+        <h2 class="section-title">AI-uppskattning</h2>
+        <div class="card form ai-form">
+          <p class="hint">Används bara när något inte finns i databasen, eller när du trycker <b>Fråga AI</b>. Nyckeln sparas bara i den här telefonen och följer inte med i backupfilen.</p>
+          <label class="field stacked"><span>Leverantör</span>
+            <select name="ai-provider">${Object.entries(ai.PROVIDERS).map(([id, p]) => `<option value="${id}" ${id === aiCfg.provider ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}</select></label>
+          <label class="field stacked"><span>API-nyckel</span>
+            <span class="key-row">
+              <input name="ai-key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(aiCfg.apiKey)}" placeholder="Klistra in nyckeln (AIza…)">
+              <button type="button" class="btn-text show-key">Visa</button>
+            </span></label>
+          <button type="button" class="btn secondary test-key">Spara och testa nyckeln</button>
+          <p class="hint ai-status">${aiCfg.apiKey
+            ? (aiCfg.resolvedModel ? `Nyckeln är sparad. Modell: ${esc(aiCfg.resolvedModel)}.` : 'Nyckeln är sparad men inte testad.')
+            : 'Ingen nyckel inlagd. Skapa en gratis på aistudio.google.com → Get API key.'}</p>
+          <label class="field stacked"><span>Modell</span>
+            <select name="ai-model">
+              <option value="auto" ${aiCfg.model === 'auto' ? 'selected' : ''}>Automatiskt (rekommenderas)</option>
+              ${(aiCfg.models || []).map(m => `<option value="${esc(m)}" ${m === aiCfg.model ? 'selected' : ''}>${esc(m)}</option>`).join('')}
+            </select></label>
+          <label class="check"><input type="checkbox" name="ai-auto" ${aiCfg.auto ? 'checked' : ''}> Fråga AI automatiskt när inget hittas</label>
+          ${aiCfg.apiKey ? '<button type="button" class="btn-text remove-key">Ta bort nyckeln</button>' : ''}
+        </div>
+      </section>
+
+      <section>
         <h2 class="section-title">Backup</h2>
         <div class="card form">
           <p class="hint">All data finns bara på den här telefonen. Exportera en backup då och då och spara den i Filer eller iCloud Drive.</p>
@@ -67,6 +94,7 @@ export async function renderSettings(main) {
         <div class="card about">
           <p>Näringsvärden från <a href="${esc(meta?.url || 'https://www.livsmedelsverket.se')}" target="_blank" rel="noopener">Livsmedelsverkets livsmedelsdatabas</a>
           (${meta?.count ?? '–'} livsmedel, hämtad ${esc(meta?.imported || '–')}). Källa: Livsmedelsverket, licens CC BY 4.0.</p>
+          <p>Märkesvaror från <a href="https://world.openfoodfacts.org" target="_blank" rel="noopener">Open Food Facts</a> (licens ODbL). Typvärden i baslistan och AI-uppskattningar är ungefärliga.</p>
           <p class="hint">Version ${APP_VERSION}</p>
         </div>
       </section>
@@ -106,6 +134,40 @@ export async function renderSettings(main) {
     }
     await db.setSetting('goals', next);
     toast('Målen är sparade');
+  });
+
+  // ---- AI ----
+  const keyInput = main.querySelector('[name="ai-key"]');
+  const aiStatus = main.querySelector('.ai-status');
+  main.querySelector('.show-key').addEventListener('click', e => {
+    const show = keyInput.type === 'password';
+    keyInput.type = show ? 'text' : 'password';
+    e.target.textContent = show ? 'Dölj' : 'Visa';
+  });
+  main.querySelector('[name="ai-provider"]').addEventListener('change', e => ai.saveConfig({ provider: e.target.value, resolvedModel: null, models: [] }));
+  main.querySelector('[name="ai-model"]').addEventListener('change', e => ai.saveConfig({ model: e.target.value }));
+  main.querySelector('[name="ai-auto"]').addEventListener('change', e => ai.saveConfig({ auto: e.target.checked }));
+  main.querySelector('.test-key').addEventListener('click', async e => {
+    const key = keyInput.value.trim();
+    if (!key) { aiStatus.textContent = 'Klistra in en nyckel först.'; return; }
+    e.target.disabled = true;
+    aiStatus.textContent = 'Testar…';
+    try {
+      const models = await ai.testConnection(key);
+      aiStatus.textContent = `Nyckeln fungerar. Använder ${models[0]}.`;
+      toast('AI-nyckeln är sparad');
+      renderSettings(main);
+    } catch (err) {
+      await ai.saveConfig({ apiKey: key });
+      aiStatus.textContent = ai.errorText(err) + ' (Nyckeln är sparad ändå.)';
+    } finally {
+      e.target.disabled = false;
+    }
+  });
+  main.querySelector('.remove-key')?.addEventListener('click', async () => {
+    if (!confirm('Ta bort API-nyckeln från telefonen?')) return;
+    await ai.saveConfig({ apiKey: '', resolvedModel: null, models: [] });
+    renderSettings(main);
   });
 
   main.querySelector('.export').addEventListener('click', exportBackup);

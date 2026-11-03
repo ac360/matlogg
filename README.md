@@ -3,7 +3,12 @@
 Personlig matloggning som PWA. Fritext ("150 g köttfärs, 2 ägg") tolkas lokalt och matchas mot
 Livsmedelsverkets livsmedelsdatabas. All data sparas i telefonen (IndexedDB).
 
+Sökordning när något loggas: Livsmedelsverket + baslista + egna livsmedel och recept (lokalt) →
+Open Food Facts (knappen "Sök märkesvaror") → AI-uppskattning med Gemini (automatiskt om inget hittas,
+eller med knappen "Fråga AI"). AI-värden märks "uppskattning" och sparas som egna livsmedel.
+
 Näringsvärden: © Livsmedelsverket, [livsmedelsdatabasen](https://dataportal.livsmedelsverket.se/livsmedel), licens CC BY 4.0.
+Märkesvaror: [Open Food Facts](https://world.openfoodfacts.org), licens ODbL.
 
 ## Struktur
 
@@ -14,9 +19,13 @@ js/app.js                                 start och navigering
 js/db.js                                  IndexedDB + export/import
 js/parser.js                              tolkar "150 g köttfärs" → mängd, enhet, namn
 js/foods.js                               livsmedelsregister, sökning, ihågkomna val, egna livsmedel
+js/basfoods.js                            baslista: vanliga produkter som saknas hos Livsmedelsverket
+js/off.js                                 Open Food Facts (märkesvaror; streckkod senare)
+js/ai/                                    AI-uppskattning: provider.js (utbytbart gränssnitt), gemini.js
+js/recipes.js                             sparade måltider och recept/matlådor
 js/portions.js                            gram per st/skiva/dl osv.
 js/goals.js                               målförslag (Mifflin-St Jeor)
-js/views/                                 dagsvy, loggning, inställningar
+js/views/                                 dagsvy, loggning, recept, inställningar
 data/livsmedel.json                       Livsmedelsverkets data (genereras)
 tools/import-slv.mjs                      hämtar databasen på nytt
 tools/release.mjs                         höjer versionsnumret inför publicering

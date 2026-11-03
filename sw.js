@@ -2,7 +2,7 @@
 // Höj CACHE_VERSION (och APP_VERSION i js/version.js) vid varje publicering,
 // annars ser telefonen inte att det finns en ny version.
 
-const CACHE_VERSION = 'v1.0.0';
+const CACHE_VERSION = 'v1.1.0';
 const CACHE = `matlogg-${CACHE_VERSION}`;
 
 const ASSETS = [
@@ -10,19 +10,27 @@ const ASSETS = [
   'index.html',
   'manifest.webmanifest',
   'css/app.css',
+  'js/ai/common.js',
+  'js/ai/gemini.js',
+  'js/ai/provider.js',
   'js/app.js',
+  'js/basfoods.js',
   'js/db.js',
   'js/foods.js',
   'js/goals.js',
   'js/nutrition.js',
+  'js/off.js',
   'js/parser.js',
   'js/portions.js',
+  'js/recipes.js',
   'js/text.js',
   'js/ui.js',
   'js/version.js',
   'js/views/day.js',
   'js/views/item-editor.js',
+  'js/views/items-list.js',
   'js/views/log.js',
+  'js/views/recipes.js',
   'js/views/settings.js',
   'data/livsmedel.json',
   'icons/apple-touch-icon.png',

@@ -22,13 +22,15 @@ export const UNIT_ALIASES = {
   skål: 'skål', skålar: 'skål',
   tallrik: 'tallrik', tallrikar: 'tallrik',
   matlåda: 'portion', matlådor: 'portion', låda: 'portion', lådor: 'portion',
+  skopa: 'skopa', skopor: 'skopa', scoop: 'skopa', scoops: 'skopa', mått: 'skopa',
+  flaska: 'flaska', flaskor: 'flaska',
 };
 
 export const UNIT_LABELS = {
   g: 'g', kg: 'kg', hg: 'hg', ml: 'ml', cl: 'cl', dl: 'dl', l: 'l',
   msk: 'msk', tsk: 'tsk', krm: 'krm', st: 'st', skiva: 'skiva', portion: 'portion',
   glas: 'glas', kopp: 'kopp', burk: 'burk', förp: 'förp', bit: 'bit',
-  klyfta: 'klyfta', näve: 'näve', skål: 'skål', tallrik: 'tallrik',
+  klyfta: 'klyfta', näve: 'näve', skål: 'skål', tallrik: 'tallrik', skopa: 'skopa', flaska: 'flaska',
 };
 
 const WORD_NUMBERS = {

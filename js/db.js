@@ -107,6 +107,8 @@ export async function exportAll() {
   for (const name of Object.keys(STORES)) {
     stores[name] = await getAll(name, { includeDeleted: true });
   }
+  // API-nyckeln stannar i telefonen och följer inte med i backupfilen.
+  stores.settings = stores.settings.map(r => (r.key === 'ai' ? { ...r, value: { ...r.value, apiKey: '' } } : r));
   return {
     app: 'matlogg',
     schema: DB_VERSION,
@@ -121,11 +123,18 @@ export async function importAll(data) {
     throw new Error('Filen är inte en backup från appen.');
   }
   const names = Object.keys(STORES);
+  const currentAi = await get('settings', 'ai');
   await tx(names, 'readwrite', t => {
     for (const name of names) {
       const store = t.objectStore(name);
       store.clear();
-      for (const rec of data.stores[name] || []) store.put(rec);
+      for (const rec of data.stores[name] || []) {
+        if (name === 'settings' && rec.key === 'ai' && currentAi?.value?.apiKey && !rec.value?.apiKey) {
+          store.put({ ...rec, value: { ...rec.value, apiKey: currentAi.value.apiKey } });
+        } else {
+          store.put(rec);
+        }
+      }
     }
   });
 }

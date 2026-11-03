@@ -5,6 +5,8 @@ import * as db from '../db.js';
 import { MEALS, sum, fmt, dateLabel, addDays, isoDate, amountText, defaultMeal } from '../nutrition.js';
 import { DEFAULT_GOALS } from '../goals.js';
 import { openLogSheet, openEditSheet } from './log.js';
+import { saveMeal } from '../recipes.js';
+import { toast } from '../ui.js';
 
 function bar(value, goal, cls) {
   const pct = goal > 0 ? Math.min(100, (value / goal) * 100) : 0;
@@ -67,7 +69,10 @@ function mealSection(meal, entries) {
             </span>
             <span class="entry-nutr"><span><b>${fmt(e.nutrients.kcal)}</b> kcal</span><small>${fmt(e.nutrients.protein, 1)} g prot</small></span>
           </button>`).join('')}
-        <button type="button" class="add-to-meal" data-meal="${meal.id}">${icons.plus}<span>Lägg till</span></button>
+        <div class="meal-actions">
+          <button type="button" class="add-to-meal" data-meal="${meal.id}">${icons.plus}<span>Lägg till</span></button>
+          ${entries.length > 1 ? `<button type="button" class="btn-text save-as-meal" data-meal="${meal.id}">Spara som måltid</button>` : ''}
+        </div>
       </div>
     </section>`;
 }
@@ -120,6 +125,14 @@ export async function renderDay(main, state) {
     if (sheetOpen()) return;
     const entry = entries.find(e => e.id === btn.dataset.id);
     if (entry) openEditSheet(entry, { onSaved: rerender });
+  }));
+  main.querySelectorAll('.save-as-meal').forEach(btn => btn.addEventListener('click', async () => {
+    const meal = MEALS.find(m => m.id === btn.dataset.meal);
+    const list = byMeal[meal.id];
+    const name = prompt(`Spara dagens ${meal.label.toLowerCase()} som måltid. Namn:`, `Min ${meal.label.toLowerCase()}`);
+    if (!name?.trim()) return;
+    await saveMeal({ name, items: list });
+    toast(`Sparade ”${name.trim()}”. Den finns som knapp när du loggar.`, { duration: 4000 });
   }));
   main.querySelector('.backup-now')?.addEventListener('click', () => { location.hash = '#/installningar'; });
 

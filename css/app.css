@@ -375,3 +375,75 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .toast.show { transform: translate(-50%, 0); opacity: 1; }
 .toast button { background: none; border: 0; color: #6ee7a8; font-weight: 600; min-height: 36px; }
 .sheet-open .toast { bottom: calc(var(--safe-bottom) + 90px); }
+
+/* ---------- Version 1.1: AI, märkesvaror, måltider, recept ---------- */
+
+.badge-muted { background: var(--track); color: var(--muted); }
+.conf { font-size: 12px; color: var(--muted); }
+.item-food.static { cursor: default; }
+.error-note { color: var(--danger); }
+.choice-brand { color: var(--muted); font-weight: 400; font-size: 13px; }
+.off-hint { margin-top: 10px; margin-bottom: 6px; }
+
+.alt-actions { display: flex; gap: 8px; margin-top: 10px; }
+.btn.small { min-height: 40px; font-size: 15px; padding: 0 12px; flex: 1; width: auto; }
+.row-actions.wrap { flex-wrap: wrap; justify-content: flex-start; gap: 0 14px; }
+
+.spinner {
+  display: inline-block; width: 20px; height: 20px; border-radius: 50%; flex: none;
+  border: 2.5px solid var(--track); border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite; vertical-align: middle;
+}
+.spinner.small { width: 14px; height: 14px; border-width: 2px; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.ai-loading { display: flex; align-items: center; gap: 12px; padding: 10px 0; color: var(--muted); }
+
+.ai-parts { margin-top: 8px; font-size: 14px; }
+.ai-parts summary { color: var(--accent); font-weight: 500; min-height: 36px; display: flex; align-items: center; list-style: none; }
+.ai-parts summary::-webkit-details-marker { display: none; }
+.ai-parts ul { list-style: none; margin: 0; padding: 0; }
+.ai-parts li { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-top: 0.5px solid var(--line); }
+.ai-parts li span:last-child { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+.meal-chips { display: flex; gap: 8px; overflow-x: auto; margin: 0 -16px 12px; padding: 0 16px 2px; scrollbar-width: none; }
+.meal-chips::-webkit-scrollbar { display: none; }
+.chip {
+  flex: none; display: flex; flex-direction: column; align-items: flex-start;
+  border: 1px solid var(--line); background: var(--card); border-radius: 12px;
+  padding: 6px 12px; min-height: 44px; font-weight: 600; font-size: 14px;
+}
+.chip small { font-weight: 400; color: var(--muted); font-size: 12px; }
+.chip.used { border-color: var(--accent); background: var(--accent-soft); }
+.save-meal { margin-top: 8px; }
+
+.meal-actions { display: flex; justify-content: space-between; align-items: center; padding-right: 12px; }
+.meal-actions .add-to-meal { width: auto; flex: 1; }
+.save-as-meal { font-size: 14px; }
+
+.section-head { display: flex; justify-content: space-between; align-items: baseline; }
+.section-head .btn-text { font-size: 15px; }
+.list { padding: 0; overflow: hidden; }
+.list-row {
+  display: flex; width: 100%; align-items: center; gap: 10px; text-align: left;
+  background: none; border: 0; padding: 12px 16px; min-height: 56px; border-bottom: 0.5px solid var(--line);
+}
+.list-row:last-child { border-bottom: 0; }
+.list-row:active { opacity: 0.6; }
+.row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.row-name { font-weight: 500; }
+.row-meta { color: var(--muted); font-size: 13px; }
+.chev { color: var(--muted); font-size: 22px; }
+.pad { padding: 14px 16px; }
+.sub-title { font-size: 15px; margin: 16px 0 8px; }
+.add-form { margin-top: 12px; }
+.recipe-sum { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.recipe-sum .vals { display: flex; gap: 10px; }
+.recipe-sum .per { font-weight: 600; }
+.log .field { margin-bottom: 4px; }
+
+.key-row { display: flex; gap: 8px; align-items: center; }
+.key-row input {
+  flex: 1; min-width: 0; min-height: 44px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--card-2); padding: 0 12px; font-size: 16px; font-family: ui-monospace, Menlo, monospace;
+}
+.ai-form .check { font-size: 15px; }

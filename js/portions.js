@@ -9,7 +9,7 @@ import { normalize } from './text.js';
 // Volymmått i ml
 export const VOLUME_ML = { ml: 1, cl: 10, dl: 100, l: 1000, msk: 15, tsk: 5, krm: 1, glas: 200, kopp: 150, skål: 250 };
 export const MASS_G = { g: 1, hg: 100, kg: 1000 };
-export const PIECE_UNITS = ['st', 'skiva', 'portion', 'tallrik', 'burk', 'förp', 'bit', 'klyfta', 'näve'];
+export const PIECE_UNITS = ['st', 'skiva', 'portion', 'tallrik', 'burk', 'förp', 'flaska', 'bit', 'klyfta', 'näve', 'skopa'];
 
 // Värden i gram. dl = gram per dl.
 const RULES = [
@@ -98,7 +98,7 @@ function groupDefaults(group) {
 }
 
 // Gissade vikter när inget annat finns (markeras som uppskattade).
-const FALLBACK = { st: 100, skiva: 15, portion: 150, tallrik: 350, burk: 400, förp: 250, bit: 20, klyfta: 5, näve: 30 };
+const FALLBACK = { st: 100, skiva: 15, portion: 150, tallrik: 350, burk: 400, förp: 250, flaska: 500, bit: 20, klyfta: 5, näve: 30, skopa: 30 };
 
 function ruleFor(words) {
   if (!words.length) return null;
