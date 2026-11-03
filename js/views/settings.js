@@ -153,13 +153,13 @@ export async function renderSettings(main) {
     e.target.disabled = true;
     aiStatus.textContent = 'Testar…';
     try {
-      const models = await ai.testConnection(key);
-      aiStatus.textContent = `Nyckeln fungerar. Använder ${models[0]}.`;
-      toast('AI-nyckeln är sparad');
-      renderSettings(main);
+      const { model, sample } = await ai.testConnection(key);
+      toast('AI fungerar');
+      await renderSettings(main);
+      main.querySelector('.ai-status').textContent =
+        `Fungerar! Testfråga "1 banan" gav ${sample.items.reduce((s, i) => s + i.kcal, 0)} kcal. Modell: ${model}.`;
     } catch (err) {
-      await ai.saveConfig({ apiKey: key });
-      aiStatus.textContent = ai.errorText(err) + ' (Nyckeln är sparad ändå.)';
+      aiStatus.textContent = ai.errorText(err) + ' Nyckeln är sparad.';
     } finally {
       e.target.disabled = false;
     }

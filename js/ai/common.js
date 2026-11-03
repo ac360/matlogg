@@ -42,7 +42,7 @@ export const ESTIMATE_SCHEMA = {
       },
     },
     reason: { type: 'STRING' },
-    confidence: { type: 'STRING', enum: ['hög', 'medel', 'låg'] },
+    confidence: { type: 'STRING', description: 'hög, medel eller låg' },
   },
   required: ['name', 'items', 'reason', 'confidence'],
 };

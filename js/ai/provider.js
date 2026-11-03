@@ -65,6 +65,42 @@ function clean(data) {
 // Samma fråga två gånger under samma session ger samma svar utan nytt anrop.
 const memo = new Map();
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Provar modellerna i tur och ordning. Överbelastad modell (503) får ett nytt försök och sedan
+// tas nästa modell; likaså om kvoten är slut eller modellen inte finns. Den modell som fungerar
+// sparas och används först nästa gång.
+async function runWithFallback(provider, cfg, text, signal) {
+  let primary = cfg.model !== 'auto' ? cfg.model : cfg.resolvedModel;
+  let models = cfg.models || [];
+  if (!primary || (cfg.model === 'auto' && !models.length)) {
+    models = await provider.listModels(cfg.apiKey, { signal });
+    if (!models.length) throw new AiError('model', 'Hittade ingen lämplig modell för nyckeln.');
+    primary = primary || models[0];
+    await saveConfig({ models, resolvedModel: primary });
+  }
+  const order = cfg.model !== 'auto' ? [primary] : [primary, ...models.filter(m => m !== primary)].slice(0, 4);
+
+  let lastErr;
+  for (const model of order) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const res = await provider.estimate(text, { apiKey: cfg.apiKey, model, signal });
+        const out = { ...clean(res.data), model };
+        if (cfg.model === 'auto' && model !== cfg.resolvedModel) await saveConfig({ resolvedModel: model });
+        return out;
+      } catch (err) {
+        if (!(err instanceof AiError)) throw err;
+        lastErr = err;
+        if (err.code === 'unavailable' && attempt === 1) { await sleep(1200); continue; }
+        if (['unavailable', 'rate-limit', 'model'].includes(err.code)) break; // nästa modell
+        throw err;
+      }
+    }
+  }
+  throw lastErr;
+}
+
 // fresh: true hoppar över sessionens minne ("Fråga igen").
 export async function estimate(text, { signal, fresh = false } = {}) {
   const cfg = await getConfig();
@@ -72,49 +108,30 @@ export async function estimate(text, { signal, fresh = false } = {}) {
   const key = `${cfg.provider}:${text.trim().toLowerCase()}`;
   if (!fresh && memo.has(key)) return memo.get(key);
   const provider = PROVIDERS[cfg.provider] || gemini;
-
-  let model = cfg.model !== 'auto' ? cfg.model : cfg.resolvedModel;
-  if (!model) {
-    const models = await provider.listModels(cfg.apiKey, { signal });
-    if (!models.length) throw new AiError('model', 'Hittade ingen lämplig modell för nyckeln.');
-    model = models[0];
-    await saveConfig({ resolvedModel: model, models });
-  }
-
-  try {
-    const res = await provider.estimate(text, { apiKey: cfg.apiKey, model, signal });
-    const out = { ...clean(res.data), model: res.model };
-    memo.set(key, out);
-    return out;
-  } catch (err) {
-    // Modellen finns inte längre, eller dess gratiskvot är slut: prova nästa modell en gång.
-    if (cfg.model === 'auto' && err instanceof AiError && (err.code === 'model' || err.code === 'rate-limit')) {
-      const models = err.code === 'model' ? await provider.listModels(cfg.apiKey, { signal }) : cfg.models || [];
-      const next = models.find(m => m !== model);
-      if (next) {
-        const res = await provider.estimate(text, { apiKey: cfg.apiKey, model: next, signal });
-        const out = { ...clean(res.data), model: res.model };
-        if (err.code === 'model') await saveConfig({ resolvedModel: next, models });
-        memo.set(key, out);
-        return out;
-      }
-    }
-    throw err;
-  }
+  const out = await runWithFallback(provider, cfg, text, signal);
+  memo.set(key, out);
+  return out;
 }
 
-// Testar nyckeln: listar modeller och returnerar den som kommer att användas.
+// Testar nyckeln på riktigt: hämtar modeller och ställer en liten fråga.
+// Returnerar { model, sample } eller kastar AiError (nyckeln sparas ändå).
 export async function testConnection(apiKey) {
-  const cfg = await getConfig();
+  const cfg = await saveConfig({ apiKey });
   const provider = PROVIDERS[cfg.provider] || gemini;
   const models = await provider.listModels(apiKey);
   if (!models.length) throw new AiError('model', 'Nyckeln fungerar men ingen lämplig Flash-modell hittades.');
-  await saveConfig({ apiKey, models, resolvedModel: models[0] });
-  return models;
+  const fresh = await saveConfig({ models, resolvedModel: cfg.model === 'auto' ? models[0] : cfg.resolvedModel });
+  const out = await runWithFallback(provider, fresh, '1 banan', undefined);
+  return { model: out.model, sample: out };
 }
 
 export function errorText(err) {
-  if (err instanceof AiError) return err.message;
+  if (err instanceof AiError) {
+    // Visa Googles egen förklaring när den finns, så att orsaken går att se.
+    const d = err.detail && ['unavailable', 'bad-response', 'model', 'auth'].includes(err.code)
+      ? ` (Google: ${String(err.detail).slice(0, 140)})` : '';
+    return err.message + d;
+  }
   if (err?.name === 'AbortError') return 'Avbrutet.';
   return 'AI:n gick inte att nå. Skriv in värden själv eller försök igen.';
 }

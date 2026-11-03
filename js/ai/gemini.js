@@ -35,7 +35,7 @@ async function call(path, { apiKey, method = 'GET', body, signal }) {
   if (res.status === 400 && /api key/i.test(msg)) throw new AiError('auth', 'API-nyckeln fungerar inte. Kontrollera den under Inställningar.', msg);
   if (res.status === 401 || res.status === 403) throw new AiError('auth', 'API-nyckeln saknar behörighet. Kontrollera den under Inställningar.', msg);
   if (res.status === 404) throw new AiError('model', 'AI-modellen finns inte längre.', msg);
-  if (res.status >= 500) throw new AiError('unavailable', 'Googles AI-tjänst har tillfälliga problem. Försök igen om en stund.', msg);
+  if (res.status >= 500) throw new AiError('unavailable', 'Googles AI-modeller är överbelastade just nu. Försök igen om en stund eller skriv in värden själv.', msg);
   throw new AiError('bad-response', `AI-anropet misslyckades (${res.status}).`, msg);
 }
 
@@ -51,7 +51,8 @@ export function rankModels(list) {
     const isAlias = /latest/.test(id);
     const lite = /lite/.test(id);
     const preview = /preview/.test(id);
-    const score = (preview ? 0 : 1000) + (lite ? 0 : 100) + version + (isAlias ? 50 : 0);
+    // Alias som "gemini-flash-latest" kan peka på en förhandsversion: lägg dem efter namngivna stabila modeller.
+    const score = (preview ? 0 : 1000) + (lite ? 0 : 100) + (isAlias ? 0 : version);
     cands.push({ id, score });
   }
   cands.sort((a, b) => b.score - a.score);
@@ -68,7 +69,6 @@ export async function estimate(text, { apiKey, model, signal }) {
     systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
     contents: [{ role: 'user', parts: [{ text: `Det här har jag ätit: "${text}"` }] }],
     generationConfig: {
-      temperature: 0.2,
       responseMimeType: 'application/json',
       responseSchema: ESTIMATE_SCHEMA,
     },
