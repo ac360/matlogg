@@ -1,12 +1,13 @@
 // Ark för att logga ny mat och för att redigera en befintlig post.
 
-import { esc, h, openSheet, toast } from '../ui.js';
+import { esc, h, icons, openSheet, toast } from '../ui.js';
 import { parseInput } from '../parser.js';
 import * as db from '../db.js';
 import * as foods from '../foods.js';
 import { listMeals, saveMeal, markMealUsed } from '../recipes.js';
 import { MEALS, sum, fmt, dateLabel } from '../nutrition.js';
-import { itemFromEntry, createItemEditor, toEntryFields, currentNutrients } from './item-editor.js';
+import { itemFromEntry, itemFromBarcode, createItemEditor, toEntryFields, currentNutrients } from './item-editor.js';
+import { openScanner } from './scanner.js';
 import { createItemsList } from './items-list.js';
 
 export function mealSegment(selected) {
@@ -42,7 +43,7 @@ export async function saveItemsAsMeal(itemsList, suggestedName) {
   return true;
 }
 
-export async function openLogSheet({ date, meal, initialText = '', onSaved }) {
+export async function openLogSheet({ date, meal, initialText = '', scan = false, onSaved }) {
   let currentMeal = meal;
   const meals = await listMeals();
 
@@ -54,7 +55,10 @@ export async function openLogSheet({ date, meal, initialText = '', onSaved }) {
       </div>` : ''}
       <form class="log-form" autocomplete="off">
         <textarea class="log-input" rows="2" enterkeyhint="go" placeholder="Vad åt du? T.ex. 150 g köttfärs, 2 ägg"></textarea>
-        <button type="submit" class="btn primary">Lägg till</button>
+        <div class="log-buttons">
+          <button type="submit" class="btn primary">Lägg till</button>
+          <button type="button" class="btn secondary scan-btn" aria-label="Skanna streckkod">${icons.scan}</button>
+        </div>
       </form>
       <p class="hint log-hint">Flera saker? Separera med komma eller ny rad. Loggas på ${esc(dateLabel(date).toLowerCase())}.</p>
       <div class="items-slot"></div>
@@ -111,6 +115,19 @@ export async function openLogSheet({ date, meal, initialText = '', onSaved }) {
 
   saveMealBtn.addEventListener('click', () => saveItemsAsMeal(list, MEALS.find(m => m.id === currentMeal)?.label));
 
+  const scanNow = () => openScanner({
+    onCode: async code => {
+      const t = toast('Söker produkten…', { duration: 0 });
+      try {
+        const ed = list.addItem(await itemFromBarcode(code));
+        ed.el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } finally {
+        t.remove();
+      }
+    },
+  });
+  body.querySelector('.scan-btn').addEventListener('click', scanNow);
+
   saveBtn.addEventListener('click', async () => {
     saveBtn.disabled = true;
     try {
@@ -138,6 +155,7 @@ export async function openLogSheet({ date, meal, initialText = '', onSaved }) {
   });
 
   if (initialText) await list.addText(initialText);
+  else if (scan) scanNow();
   else setTimeout(() => input.focus(), 50);
   return sheet;
 }

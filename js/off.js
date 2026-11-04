@@ -9,10 +9,17 @@ const FIELDS = 'code,product_name,product_name_sv,brands,nutriments,serving_quan
 
 export class OffError extends Error {}
 
-async function getJson(url, signal) {
+const TIMEOUT_MS = 10000;
+
+async function getJson(url, signal, { notFoundOk = false } = {}) {
   for (let attempt = 1; ; attempt++) {
+    // Varje försök får högst 10 sekunder, så att en seg anslutning inte låser appen.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+    signal?.addEventListener('abort', () => ctrl.abort(), { once: true });
     try {
-      const res = await fetch(url, { signal });
+      const res = await fetch(url, { signal: ctrl.signal });
+      if (notFoundOk && res.status === 404) return null;
       // Tjänsten svarar ibland 503 när den är hårt belastad: försök upp till tre gånger.
       if (res.status >= 500 && attempt < 3) throw new Error('retry');
       if (!res.ok) throw new OffError(res.status === 429 ? 'För många sökningar. Vänta en minut.' : 'Open Food Facts svarar inte just nu.');
@@ -20,9 +27,11 @@ async function getJson(url, signal) {
     } catch (err) {
       if (signal?.aborted || err instanceof OffError) throw err;
       if (attempt >= 3) {
-        throw new OffError(navigator.onLine === false ? 'Ingen internetanslutning.' : 'Open Food Facts svarar inte just nu. Försök igen.');
+        throw new OffError(navigator.onLine === false ? 'Ingen internetanslutning.' : 'Open Food Facts svarar inte just nu.');
       }
       await new Promise(r => setTimeout(r, 1000 * attempt));
+    } finally {
+      clearTimeout(timer);
     }
   }
 }
@@ -80,7 +89,12 @@ export async function searchProducts(query, { signal, limit = 8 } = {}) {
   }).slice(0, limit);
 }
 
+// Returnerar produkten, null om den saknas, eller { incomplete: true, name, brand } om näringsvärden saknas.
 export async function productByBarcode(code, { signal } = {}) {
-  const data = await getJson(`${PRODUCT}/${encodeURIComponent(code)}.json?fields=${FIELDS}`, signal);
-  return data.product ? toFood(data.product) : null;
+  const data = await getJson(`${PRODUCT}/${encodeURIComponent(code)}.json?fields=${FIELDS}`, signal, { notFoundOk: true });
+  if (!data?.product || data.status === 0) return null;
+  const food = toFood({ ...data.product, code });
+  if (food) return food;
+  const p = data.product;
+  return { incomplete: true, code, name: (p.product_name_sv || p.product_name || '').trim(), brand: (p.brands || '').split(',')[0].trim() };
 }

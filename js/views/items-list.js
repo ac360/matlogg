@@ -68,6 +68,7 @@ export function createItemsList({ onChange = () => {}, allowAi = true, expandMea
 
   return {
     el,
+    addItem: item => add(item), // returnerar kortet
     addText,
     addEntries,
     collect,

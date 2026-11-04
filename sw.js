@@ -2,7 +2,7 @@
 // Höj CACHE_VERSION (och APP_VERSION i js/version.js) vid varje publicering,
 // annars ser telefonen inte att det finns en ny version.
 
-const CACHE_VERSION = 'v1.1.2';
+const CACHE_VERSION = 'v1.2.0';
 const CACHE = `matlogg-${CACHE_VERSION}`;
 
 const ASSETS = [
@@ -14,6 +14,7 @@ const ASSETS = [
   'js/ai/gemini.js',
   'js/ai/provider.js',
   'js/app.js',
+  'js/barcode.js',
   'js/basfoods.js',
   'js/db.js',
   'js/foods.js',
@@ -31,11 +32,15 @@ const ASSETS = [
   'js/views/items-list.js',
   'js/views/log.js',
   'js/views/recipes.js',
+  'js/views/scanner.js',
   'js/views/settings.js',
   'data/livsmedel.json',
   'icons/apple-touch-icon.png',
   'icons/icon-192.png',
   'icons/icon-512.png',
+  'vendor/zxing/es/reader/index.js',
+  'vendor/zxing/es/share.js',
+  'vendor/zxing/zxing_reader.wasm',
 ];
 
 self.addEventListener('install', event => {

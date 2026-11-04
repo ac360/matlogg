@@ -20,7 +20,8 @@ js/db.js                                  IndexedDB + export/import
 js/parser.js                              tolkar "150 g köttfärs" → mängd, enhet, namn
 js/foods.js                               livsmedelsregister, sökning, ihågkomna val, egna livsmedel
 js/basfoods.js                            baslista: vanliga produkter som saknas hos Livsmedelsverket
-js/off.js                                 Open Food Facts (märkesvaror; streckkod senare)
+js/off.js                                 Open Food Facts (märkesvaror och streckkoder)
+js/barcode.js, js/views/scanner.js        streckkodsskanning med kameran (zxing-wasm i vendor/zxing, MIT)
 js/ai/                                    AI-uppskattning: provider.js (utbytbart gränssnitt), gemini.js
 js/recipes.js                             sparade måltider och recept/matlådor
 js/portions.js                            gram per st/skiva/dl osv.

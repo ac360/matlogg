@@ -30,7 +30,12 @@ function open() {
         for (const [idx, path] of def.indexes || []) store.createIndex(idx, path);
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      // Släpp databasen om en annan flik eller en ny version behöver den.
+      db.onversionchange = () => { db.close(); dbPromise = null; };
+      resolve(db);
+    };
     req.onerror = () => reject(req.error);
   });
   return dbPromise;

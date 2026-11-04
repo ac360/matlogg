@@ -14,7 +14,7 @@ import { esc, h, num, toast } from '../ui.js';
 import { normalize } from '../text.js';
 import * as foods from '../foods.js';
 import * as ai from '../ai/provider.js';
-import { searchProducts } from '../off.js';
+import { searchProducts, productByBarcode } from '../off.js';
 import { toGrams, unitOptions, PIECE_UNITS } from '../portions.js';
 import { KEYS, LABELS, scale, scaleBy, sum, fmt, fmtIn } from '../nutrition.js';
 import { UNIT_LABELS, parseLine } from '../parser.js';
@@ -70,6 +70,45 @@ export async function itemFromParsed(parsed) {
     const cfg = await ai.getConfig();
     item.autoAi = !!cfg.apiKey && cfg.auto;
   }
+  return item;
+}
+
+// Skapar ett kort från en skannad streckkod: eget livsmedel → Open Food Facts → manuell inmatning.
+export async function itemFromBarcode(code) {
+  const item = baseItem({ raw: `Streckkod ${code}`, name: '', qty: null, unit: null, size: 1 });
+  item.barcode = code;
+  let food = await foods.findCustomByBarcode(code);
+  let hint = '';
+  let prefillName = '';
+  if (!food) {
+    try {
+      const p = await productByBarcode(code);
+      if (p && !p.incomplete) {
+        food = await foods.saveCustomFood({
+          name: p.name, per100g: p.per100g, units: p.units, source: 'off', barcode: code, brand: p.brand || undefined,
+        });
+      } else if (p?.incomplete) {
+        prefillName = [p.name, p.brand && `(${p.brand})`].filter(Boolean).join(' ');
+        hint = 'Produkten finns i Open Food Facts men saknar näringsvärden. Skriv av dem från förpackningen.';
+      } else {
+        hint = 'Produkten finns inte i Open Food Facts. Skriv av näringsvärdet per 100 g från förpackningen, så känner appen igen den nästa gång.';
+      }
+    } catch (err) {
+      hint = `${err.message || 'Open Food Facts gick inte att nå.'} Skriv av näringsvärdet från förpackningen.`;
+    }
+  }
+  if (food) {
+    item.query = food.name.toLowerCase();
+    item.queryWords = food.words;
+    item.candidates = [food];
+    applyFood(item, food);
+    return item;
+  }
+  item.mode = 'manual';
+  item.manual = {
+    name: prefillName, grams: null, per100: true, saveAsFood: true, barcode: code, hint,
+    values: { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 },
+  };
   return item;
 }
 
@@ -161,15 +200,20 @@ export async function toEntryFields(item) {
     const m = item.manual;
     if (!m.name.trim()) return { error: 'Ange ett namn.' };
     if (!(m.grams > 0)) return { error: `Ange mängd i gram för ”${m.name}”.` };
+    const per100g = m.per100 ? { ...m.values } : scaleBy(m.values, 100 / m.grams);
+    const totals = m.per100 ? scale(m.values, m.grams) : { ...m.values };
     let foodRef = item.savedFoodRef || null;
-    if (m.saveAsFood && !foodRef) {
+    if ((m.saveAsFood || m.barcode) && !foodRef) {
       const units = {};
       if (isPiece(item.parsedUnit) && item.parsedQty > 0) units[item.parsedUnit] = m.grams / item.parsedQty;
+      // Skannad vara: mängden blir standardportion nästa gång (t.ex. en bar på 55 g).
+      if (m.barcode) units.portion = m.grams;
       const food = await foods.saveCustomFood({
         name: m.name.trim(),
-        per100g: scaleBy(m.values, 100 / m.grams),
+        per100g,
         units,
         source: 'manual',
+        barcode: m.barcode || undefined,
         aliases: item.query && item.query !== m.name.trim().toLowerCase() ? [item.query] : undefined,
       });
       foodRef = item.savedFoodRef = food.ref;
@@ -182,7 +226,7 @@ export async function toEntryFields(item) {
       qty: piece ? item.parsedQty ?? 1 : m.grams,
       unit: piece ? item.parsedUnit : 'g',
       grams: m.grams,
-      nutrients: { ...m.values },
+      nutrients: totals,
       override: !foodRef,
       estimated: false,
     };
@@ -422,14 +466,19 @@ export function createItemEditor(item, { onChange = () => {}, onRemove, onSplit,
     const m = item.manual;
     return `
       <div class="manual">
-        <label class="field"><span>Namn</span><input class="m-name" type="text" value="${esc(m.name)}"></label>
+        ${m.hint ? `<p class="note">${esc(m.hint)}</p>` : ''}
+        <label class="field"><span>Namn</span><input class="m-name" type="text" value="${esc(m.name)}" placeholder="t.ex. Proteinbar choklad"></label>
         <label class="field"><span>Mängd (gram)</span><input class="m-grams" type="text" inputmode="decimal" value="${m.grams ? fmtIn(m.grams, 0) : ''}"></label>
-        <p class="hint">Värden för hela mängden:</p>
+        <div class="segment two m-basis" role="radiogroup" aria-label="Värdena gäller">
+          <button type="button" role="radio" data-basis="per100" aria-checked="${!!m.per100}">Per 100 g</button>
+          <button type="button" role="radio" data-basis="total" aria-checked="${!m.per100}">För hela mängden</button>
+        </div>
         <div class="values-grid">
           ${KEYS.map(k => `<label><span>${LABELS[k]}</span><input data-k="${k}" type="text" inputmode="decimal" value="${m.values[k] ? fmtIn(m.values[k], 1) : ''}" placeholder="0"></label>`).join('')}
         </div>
-        <label class="check"><input type="checkbox" class="m-save" ${m.saveAsFood ? 'checked' : ''}> Spara som eget livsmedel</label>
-        <button type="button" class="btn-text back-search">Tillbaka till sökning</button>
+        ${m.barcode ? `<p class="hint">Sparas som eget livsmedel med streckkod ${esc(m.barcode)}.</p>`
+          : `<label class="check"><input type="checkbox" class="m-save" ${m.saveAsFood ? 'checked' : ''}> Spara som eget livsmedel</label>`}
+        ${m.barcode ? '' : '<button type="button" class="btn-text back-search">Tillbaka till sökning</button>'}
       </div>`;
   }
 
@@ -660,6 +709,7 @@ export function createItemEditor(item, { onChange = () => {}, onRemove, onSplit,
         grams: isMass && item.parsedQty ? item.parsedQty * (MASS_UNITS[item.parsedUnit] || 1) : null,
         values: { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 },
         saveAsFood: true,
+        per100: false,
       };
       item.mode = 'manual';
       render();
@@ -670,12 +720,18 @@ export function createItemEditor(item, { onChange = () => {}, onRemove, onSplit,
       const m = item.manual;
       el.querySelector('.m-name').addEventListener('input', e => { m.name = e.target.value; });
       el.querySelector('.m-grams').addEventListener('input', e => { m.grams = num(e.target.value); });
-      el.querySelector('.m-save').addEventListener('change', e => { m.saveAsFood = e.target.checked; });
+      el.querySelector('.m-save')?.addEventListener('change', e => { m.saveAsFood = e.target.checked; });
+      el.querySelector('.m-grams').addEventListener('change', changed);
+      el.querySelectorAll('.m-basis button').forEach(btn => btn.addEventListener('click', () => {
+        m.per100 = btn.dataset.basis === 'per100';
+        render();
+        changed();
+      }));
       el.querySelectorAll('.values-grid input[data-k]').forEach(inp => inp.addEventListener('input', () => {
         m.values[inp.dataset.k] = num(inp.value) || 0;
         changed();
       }));
-      el.querySelector('.back-search').addEventListener('click', () => {
+      el.querySelector('.back-search')?.addEventListener('click', () => {
         item.mode = item.candidates.length ? 'choose' : 'none';
         render();
         changed();
@@ -693,7 +749,7 @@ export function createItemEditor(item, { onChange = () => {}, onRemove, onSplit,
 
 // Näringsvärden som kortet bidrar med just nu (för summeringen).
 export function currentNutrients(item) {
-  if (item.mode === 'manual') return item.manual.values;
+  if (item.mode === 'manual') return item.manual.per100 ? scale(item.manual.values, item.manual.grams || 0) : item.manual.values;
   if (item.mode === 'food' || item.mode === 'fixed' || item.mode === 'ai') return item.nutrients;
   return null;
 }

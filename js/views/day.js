@@ -104,7 +104,10 @@ export async function renderDay(main, state) {
       ${date !== isoDate() ? '<button type="button" class="btn-text to-today">Gå till idag</button>' : ''}
     </div>
     <div class="log-bar">
-      <button type="button" class="log-bar-btn">${icons.search}<span>Vad har du ätit?</span></button>
+      <div class="log-bar-inner">
+        <button type="button" class="log-bar-btn">${icons.search}<span>Vad har du ätit?</span></button>
+        <button type="button" class="log-bar-scan" aria-label="Skanna streckkod">${icons.scan}</button>
+      </div>
     </div>`;
 
   const rerender = () => renderDay(main, state);
@@ -117,6 +120,9 @@ export async function renderDay(main, state) {
   main.querySelector('.date-pick').addEventListener('change', e => { if (e.target.value) go(e.target.value); });
   main.querySelector('.log-bar-btn').addEventListener('click', () => {
     if (!sheetOpen()) openLogSheet({ date, meal: date === isoDate() ? defaultMeal() : 'middag', onSaved: rerender });
+  });
+  main.querySelector('.log-bar-scan').addEventListener('click', () => {
+    if (!sheetOpen()) openLogSheet({ date, meal: date === isoDate() ? defaultMeal() : 'middag', scan: true, onSaved: rerender });
   });
   main.querySelectorAll('.add-to-meal').forEach(btn => btn.addEventListener('click', () => {
     if (!sheetOpen()) openLogSheet({ date, meal: btn.dataset.meal, onSaved: rerender });
