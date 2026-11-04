@@ -44,6 +44,11 @@ export async function saveItemsAsMeal(itemsList, suggestedName) {
 }
 
 export async function openLogSheet({ date, meal, initialText = '', scan = false, onSaved }) {
+  // Skannern öppnas innan något annat väntas in, så att iPhone kopplar kameran till trycket.
+  let resolveList;
+  const listReady = new Promise(r => { resolveList = r; });
+  if (scan) openScanner({ onCode: async code => handleScanned(await listReady, code) });
+
   let currentMeal = meal;
   const meals = await listMeals();
 
@@ -115,18 +120,8 @@ export async function openLogSheet({ date, meal, initialText = '', scan = false,
 
   saveMealBtn.addEventListener('click', () => saveItemsAsMeal(list, MEALS.find(m => m.id === currentMeal)?.label));
 
-  const scanNow = () => openScanner({
-    onCode: async code => {
-      const t = toast('Söker produkten…', { duration: 0 });
-      try {
-        const ed = list.addItem(await itemFromBarcode(code));
-        ed.el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      } finally {
-        t.remove();
-      }
-    },
-  });
-  body.querySelector('.scan-btn').addEventListener('click', scanNow);
+  resolveList(list);
+  body.querySelector('.scan-btn').addEventListener('click', () => openScanner({ onCode: code => handleScanned(list, code) }));
 
   saveBtn.addEventListener('click', async () => {
     saveBtn.disabled = true;
@@ -155,9 +150,20 @@ export async function openLogSheet({ date, meal, initialText = '', scan = false,
   });
 
   if (initialText) await list.addText(initialText);
-  else if (scan) scanNow();
-  else setTimeout(() => input.focus(), 50);
+  else if (!scan) setTimeout(() => input.focus(), 50);
   return sheet;
+}
+
+async function handleScanned(list, code) {
+  const t = toast('Söker produkten…', { duration: 0 });
+  try {
+    const ed = list.addItem(await itemFromBarcode(code));
+    ed.el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  } catch (err) {
+    toast('Kunde inte lägga till produkten: ' + err.message);
+  } finally {
+    t.remove();
+  }
 }
 
 export function openEditSheet(entry, { onSaved } = {}) {
