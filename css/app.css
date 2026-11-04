@@ -447,3 +447,5 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   background: var(--card-2); padding: 0 12px; font-size: 16px; font-family: ui-monospace, Menlo, monospace;
 }
 .ai-form .check { font-size: 15px; }
+
+.cook-toggle { grid-template-columns: 1fr 1fr; margin: 2px 0 8px; }

@@ -74,6 +74,7 @@ export async function renderSettings(main) {
               ${(aiCfg.models || []).map(m => `<option value="${esc(m)}" ${m === aiCfg.model ? 'selected' : ''}>${esc(m)}</option>`).join('')}
             </select></label>
           <label class="check"><input type="checkbox" name="ai-auto" ${aiCfg.auto ? 'checked' : ''}> Fråga AI automatiskt när inget hittas</label>
+          ${ai.lastError() ? `<p class="hint">Senaste fel från Google (${new Date(ai.lastError().at).toLocaleTimeString('sv-SE')}): ${ai.lastError().status} – ${esc(ai.lastError().message || 'inget meddelande')}</p>` : ''}
           ${aiCfg.apiKey ? '<button type="button" class="btn-text remove-key">Ta bort nyckeln</button>' : ''}
         </div>
       </section>

@@ -6,6 +6,10 @@ export const label = 'Google Gemini';
 const BASE = 'https://generativelanguage.googleapis.com/v1beta';
 const TIMEOUT_MS = 45000;
 
+// Senaste felet från Google, visas under Inställningar för felsökning.
+let lastError = null;
+export const getLastError = () => lastError;
+
 async function call(path, { apiKey, method = 'GET', body, signal }) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(new DOMException('timeout', 'TimeoutError')), TIMEOUT_MS);
@@ -31,10 +35,13 @@ async function call(path, { apiKey, method = 'GET', body, signal }) {
 
   let msg = '';
   try { msg = (await res.json())?.error?.message || ''; } catch {}
+  lastError = { status: res.status, message: msg, path: path.split(':')[0], at: new Date().toISOString() };
   if (res.status === 429) throw new AiError('rate-limit', 'Gratiskvoten hos Google är slut för stunden. Vänta en minut (eller till i morgon) eller skriv in värden själv.', msg);
   if (res.status === 400 && /api key/i.test(msg)) throw new AiError('auth', 'API-nyckeln fungerar inte. Kontrollera den under Inställningar.', msg);
   if (res.status === 401 || res.status === 403) throw new AiError('auth', 'API-nyckeln saknar behörighet. Kontrollera den under Inställningar.', msg);
   if (res.status === 404) throw new AiError('model', 'AI-modellen finns inte längre.', msg);
+  if (res.status === 400) throw new AiError('invalid', `AI-anropet avvisades (400).`, msg);
+  if (res.status === 500) throw new AiError('internal', 'Googles AI-tjänst fick ett internt fel.', msg);
   if (res.status >= 500) throw new AiError('unavailable', 'Googles AI-modeller är överbelastade just nu. Försök igen om en stund eller skriv in värden själv.', msg);
   throw new AiError('bad-response', `AI-anropet misslyckades (${res.status}).`, msg);
 }
@@ -64,25 +71,77 @@ export async function listModels(apiKey, { signal } = {}) {
   return rankModels(data.models || []);
 }
 
-export async function estimate(text, { apiKey, model, signal }) {
-  const body = {
-    systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+// JSON Schema med små bokstäver (responseJsonSchema) från det gemensamma schemat.
+function toJsonSchema(node) {
+  if (Array.isArray(node)) return node.map(toJsonSchema);
+  if (!node || typeof node !== 'object') return node;
+  const out = {};
+  for (const [k, v] of Object.entries(node)) out[k] = k === 'type' ? String(v).toLowerCase() : toJsonSchema(v);
+  return out;
+}
+
+const PROMPT_FORMAT = `
+Svara med exakt ett JSON-objekt och inget annat, på formen:
+{"name": "...", "items": [{"name": "...", "grams": 0, "kcal": 0, "protein": 0, "carbs": 0, "fat": 0, "fiber": 0}], "reason": "...", "confidence": "medel"}`;
+
+// Kort tänkande räcker och gör svaret snabbare. Bara Gemini 3 och senare har thinkingLevel.
+const supportsThinkingLevel = model => /^gemini-(?:[3-9]|\d{2,})/.test(model);
+
+// Anropsvarianter, från bäst till enklast. Avvisar Google en variant (400 eller internt fel 500)
+// provas nästa, så att appen fungerar även om API:t ändras.
+function variants(model) {
+  const v = [];
+  if (supportsThinkingLevel(model)) v.push({ schema: 'json', thinking: { thinkingLevel: 'LOW' } });
+  v.push({ schema: 'json' }, { schema: 'openapi' }, { schema: 'none' });
+  return v;
+}
+
+function buildBody(text, variant) {
+  const generationConfig = { responseMimeType: 'application/json' };
+  if (variant.schema === 'json') generationConfig.responseJsonSchema = toJsonSchema(ESTIMATE_SCHEMA);
+  if (variant.schema === 'openapi') generationConfig.responseSchema = ESTIMATE_SCHEMA;
+  if (variant.thinking) generationConfig.thinkingConfig = variant.thinking;
+  return {
+    systemInstruction: { parts: [{ text: SYSTEM_PROMPT + (variant.schema === 'none' ? PROMPT_FORMAT : '') }] },
     contents: [{ role: 'user', parts: [{ text: `Det här har jag ätit: "${text}"` }] }],
-    generationConfig: {
-      responseMimeType: 'application/json',
-      responseSchema: ESTIMATE_SCHEMA,
-    },
+    generationConfig,
   };
-  const data = await call(`models/${encodeURIComponent(model)}:generateContent`, { apiKey, method: 'POST', body, signal });
-  const cand = data.candidates?.[0];
-  if (!cand) {
-    const reason = data.promptFeedback?.blockReason;
-    throw new AiError('bad-response', reason ? 'AI:n ville inte svara på den här frågan.' : 'AI:n gav inget svar.');
+}
+
+function parseJson(textOut) {
+  const t = textOut.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, '').trim();
+  try { return JSON.parse(t); } catch {}
+  const a = t.indexOf('{'), b = t.lastIndexOf('}');
+  if (a >= 0 && b > a) return JSON.parse(t.slice(a, b + 1));
+  throw new Error('no json');
+}
+
+export async function estimate(text, { apiKey, model, signal }) {
+  let lastErr;
+  for (const variant of variants(model)) {
+    let data;
+    try {
+      data = await call(`models/${encodeURIComponent(model)}:generateContent`, {
+        apiKey, method: 'POST', body: buildBody(text, variant), signal,
+      });
+    } catch (err) {
+      lastErr = err;
+      if (err instanceof AiError && (err.code === 'invalid' || err.code === 'internal')) continue;
+      throw err;
+    }
+    const cand = data.candidates?.[0];
+    if (!cand) {
+      if (data.promptFeedback?.blockReason) throw new AiError('bad-response', 'AI:n ville inte svara på den här frågan.');
+      lastErr = new AiError('bad-response', 'AI:n gav inget svar.');
+      continue;
+    }
+    const textOut = (cand.content?.parts || []).filter(p => !p.thought && p.text).map(p => p.text).join('');
+    try {
+      return { data: parseJson(textOut), model };
+    } catch {
+      lastErr = new AiError('bad-response', 'AI:ns svar gick inte att tolka.', `finishReason ${cand.finishReason || '?'}: ${textOut.slice(0, 80)}`);
+    }
   }
-  const textOut = (cand.content?.parts || []).filter(p => !p.thought && p.text).map(p => p.text).join('');
-  try {
-    return { data: JSON.parse(textOut), model };
-  } catch {
-    throw new AiError('bad-response', 'AI:ns svar gick inte att tolka. Försök igen.');
-  }
+  if (lastErr?.code === 'invalid') throw new AiError('invalid', 'Google avvisade AI-anropet.', lastErr.detail);
+  throw lastErr;
 }

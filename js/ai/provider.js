@@ -92,8 +92,8 @@ async function runWithFallback(provider, cfg, text, signal) {
       } catch (err) {
         if (!(err instanceof AiError)) throw err;
         lastErr = err;
-        if (err.code === 'unavailable' && attempt === 1) { await sleep(1200); continue; }
-        if (['unavailable', 'rate-limit', 'model'].includes(err.code)) break; // nästa modell
+        if ((err.code === 'unavailable' || err.code === 'internal') && attempt === 1) { await sleep(1200); continue; }
+        if (['unavailable', 'internal', 'rate-limit', 'model', 'bad-response'].includes(err.code)) break; // nästa modell
         throw err;
       }
     }
@@ -125,10 +125,14 @@ export async function testConnection(apiKey) {
   return { model: out.model, sample: out };
 }
 
+export function lastError() {
+  return gemini.getLastError?.() || null;
+}
+
 export function errorText(err) {
   if (err instanceof AiError) {
     // Visa Googles egen förklaring när den finns, så att orsaken går att se.
-    const d = err.detail && ['unavailable', 'bad-response', 'model', 'auth'].includes(err.code)
+    const d = err.detail && ['unavailable', 'internal', 'invalid', 'bad-response', 'model', 'auth', 'rate-limit'].includes(err.code)
       ? ` (Google: ${String(err.detail).slice(0, 140)})` : '';
     return err.message + d;
   }

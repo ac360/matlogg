@@ -44,13 +44,28 @@ function baseItem(parsed) {
   };
 }
 
+// Vikt i gram om mängden angavs i g/hg/kg, annars null.
+const massGrams = p => (p.qty != null && MASS_UNITS[p.unit] ? p.qty * MASS_UNITS[p.unit] : null);
+const COOKED_GUESS_MIN_G = 130;
+
 export async function itemFromParsed(parsed) {
   const item = baseItem(parsed);
-  const res = await foods.resolve(parsed.name, { preferRecipe: /matlåd|låd(a|or)\b/i.test(parsed.raw) });
+  const grams = massGrams(parsed);
+  const preferCooked = grams != null && grams >= COOKED_GUESS_MIN_G && !foods.mentionsCooking(parsed.raw);
+  const res = await foods.resolve(parsed.name, { preferRecipe: /matlåd|låd(a|or)\b/i.test(parsed.raw), preferCooked });
   item.candidates = res.candidates;
   item.remembered = res.remembered;
-  if (res.chosen) applyFood(item, res.chosen);
-  else item.mode = res.candidates.length ? 'choose' : 'none';
+  if (res.chosen) {
+    let food = res.chosen;
+    // Över 130 g okokt pasta/ris är ovanligt: anta kokt vikt (går att byta med ett tryck).
+    const sib = foods.cookingSibling(food);
+    if (preferCooked && !res.remembered && sib?.state === 'raw' && foods.isStarch(food)) food = sib.other;
+    // Visa att appen antog kokt vikt, så att det är lätt att byta.
+    if (preferCooked && !res.remembered && foods.isStarch(food) && foods.cookingSibling(food)?.state === 'cooked') {
+      item.cookedGuess = true;
+    }
+    applyFood(item, food);
+  } else item.mode = res.candidates.length ? 'choose' : 'none';
   if (item.mode === 'none') {
     const cfg = await ai.getConfig();
     item.autoAi = !!cfg.apiKey && cfg.auto;
@@ -319,14 +334,26 @@ export function createItemEditor(item, { onChange = () => {}, onRemove, onSplit,
         <span class="item-name">${esc(name)}</span>
         <span class="item-food-meta">${sourceBadge(item.food, item.estimated)}${item.mode === 'food' ? '<span class="change">Byt</span>' : ''}</span>
       </button>
+      ${cookingToggle()}
       ${amountRow(units)}
       <div class="item-nutr">${nutrLine(item.nutrients)}</div>
+      ${item.cookedGuess ? '<p class="note">Antar att du vägde kokt. Tryck <b>Okokt</b> ovan om du vägde torrt.</p>' : ''}
       ${item.approx ? '<p class="note">≈ Vikten är en uppskattning. Justera gram om du vet bättre.</p>' : ''}
       ${item.override ? '<p class="note">Värdena är ändrade för hand.</p>' : ''}
       ${item.food?.typical ? '<p class="note">Typiskt värde för produkttypen. Ditt märke kan skilja sig något.</p>' : ''}
       ${item.food?.estimated ? `<p class="note warn">AI-uppskattning, inte uppmätta värden.${item.food.aiReason ? ' ' + esc(item.food.aiReason) : ''}</p>` : ''}
       ${!item.food && item.estimated ? '<p class="note warn">Uppskattade värden.</p>' : ''}
       ${valuesEditor(item.override && item.food ? 'Återställ till databasens värden' : '')}`;
+  }
+
+  function cookingToggle() {
+    const sib = item.mode === 'food' ? foods.cookingSibling(item.food) : null;
+    if (!sib) return '';
+    const raw = sib.state === 'raw';
+    return `<div class="segment cook-toggle" role="radiogroup" aria-label="Vägt som">
+      <button type="button" role="radio" data-cook="raw" aria-checked="${raw}">${sib.rawLabel}</button>
+      <button type="button" role="radio" data-cook="cooked" aria-checked="${!raw}">Kokt</button>
+    </div>`;
   }
 
   function renderAi() {
@@ -489,6 +516,21 @@ export function createItemEditor(item, { onChange = () => {}, onRemove, onSplit,
       item.mode = item.candidates.length ? 'choose' : 'none';
       render();
     });
+
+    el.querySelectorAll('.cook-toggle button').forEach(btn => btn.addEventListener('click', () => {
+      const sib = foods.cookingSibling(item.food);
+      if (!sib || btn.dataset.cook === sib.state) return;
+      // Byt livsmedel men behåll den vägda mängden.
+      item.food = sib.other;
+      item.override = false;
+      item.cookedGuess = false;
+      item.userChose = true;
+      if (!item.candidates.some(f => f.key === sib.other.key)) item.candidates = [sib.other, ...item.candidates];
+      recalcFromQty(item);
+      item.nutrients = scale(item.food.per100, item.grams);
+      render();
+      changed();
+    }));
 
     const qty = el.querySelector('.qty');
     qty?.addEventListener('input', () => {

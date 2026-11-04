@@ -37,6 +37,9 @@ const SYNONYMS = {
   'herrgårdsost': ['ost hårdost fett 28%'], 'grevé': ['ost hårdost fett 28%'], 'cheddar': ['ost hårdost fett 31%'],
   'räkor': ['räka'], 'potatisar': ['potatis'], 'pommes': ['pommes frites'], 'smörgås': ['bröd'], 'macka': ['bröd'],
   'olja': ['rapsolja', 'olivolja'], 'quinoa': ['mjölmålla quinoa'],
+  'ris': ['ris långkornigt'], 'kokt ris': ['ris långkornigt kokt'], 'ris kokt': ['ris långkornigt kokt'],
+  'fullkornspasta': ['pasta fullkorn'], 'kokt fullkornspasta': ['pasta kokt fullkorn'], 'fullkornspasta kokt': ['pasta kokt fullkorn'],
+  'fullkornsris kokt': ['ris råris kokt'], 'kokt fullkornsris': ['ris råris kokt'],
   'kanelbulle': ['sött vetebröd kanelbulle'], 'kanelbullar': ['sött vetebröd kanelbulle'],
   'pasta m köttfärssås': ['spagetti m köttfärssås'], 'spagetti m köttfärssås': ['spagetti m köttfärssås'],
   'spaghetti m köttfärssås': ['spagetti m köttfärssås'], 'köttfärssås': ['köttfärssås nöt'],
@@ -84,8 +87,59 @@ export function indexSlv(data) {
     });
     foods.set(food.key, food);
   }
+  buildCookingIndex();
   rebuildVocab();
 }
+
+// ---- Okokt/kokt ----
+// Par som "Pasta okokt" ↔ "Pasta kokt u. salt" och "Bulgur" ↔ "Bulgur kokt".
+const RAW_WORDS = new Set(['okokt', 'okokta', 'torkad', 'torkade', 'torr', 'rå']);
+const COOKED_WORDS = new Set(['kokt', 'kokta', 'tillagad', 'tillagade']);
+const IGNORE_WORDS = new Set(['m', 'u', 'salt']);
+const cookingIndex = new Map(); // grundnamn → { raw: [food], cooked: [food], plain: [food] }
+
+function cookingState(words) {
+  if (words.some(w => RAW_WORDS.has(w))) return 'raw';
+  if (words.some(w => COOKED_WORDS.has(w))) return 'cooked';
+  return 'plain';
+}
+const cookingBase = words => words
+  .filter(w => !RAW_WORDS.has(w) && !COOKED_WORDS.has(w) && !IGNORE_WORDS.has(w) && !/^\d/.test(w))
+  .join(' ');
+
+// Stärkelsevaror som ofta vägs efter kokning. Bara för dem gissar appen "kokt" vid stor vikt.
+const STARCH = new Set(['pasta', 'ris', 'nudlar', 'bulgur', 'couscous', 'mjölmålla', 'matvete', 'korn', 'potatis', 'linser', 'kikärtor']);
+export const isStarch = food => !!food && food.ref.source === 'slv' && STARCH.has(food.words[0]);
+
+function buildCookingIndex() {
+  cookingIndex.clear();
+  for (const f of foods.values()) {
+    if (f.ref.source !== 'slv') continue;
+    const key = cookingBase(f.words);
+    if (!cookingIndex.has(key)) cookingIndex.set(key, { raw: [], cooked: [], plain: [] });
+    cookingIndex.get(key)[cookingState(f.words)].push(f);
+  }
+}
+
+// Returnerar { state: 'raw'|'cooked', other: food } när livsmedlet finns i både okokt och kokt form.
+export function cookingSibling(food) {
+  if (!food || food.ref.source !== 'slv') return null;
+  const entry = cookingIndex.get(cookingBase(food.words));
+  if (!entry) return null;
+  let state = cookingState(food.words);
+  if (state === 'plain') state = 'raw'; // "Bulgur" utan tillägg är torr vara
+  const pool = state === 'raw' ? entry.cooked : [...entry.raw, ...entry.plain];
+  if (!pool.length) return null;
+  // Föredra varianten som delar flest ord med nuvarande, sedan "u. salt", sedan kortaste namnet.
+  const mine = food.words.filter(w => !RAW_WORDS.has(w) && !COOKED_WORDS.has(w));
+  const overlap = f => mine.filter(w => f.words.includes(w)).length;
+  const other = [...pool].sort((a, b) =>
+    overlap(b) - overlap(a) || (b.words.includes('u') - a.words.includes('u')) || a.name.length - b.name.length)[0];
+  const rawWord = [...food.words, ...other.words].includes('rå') ? 'Rå' : 'Okokt';
+  return { state, other, rawLabel: rawWord };
+}
+
+export const mentionsCooking = text => normalize(text).some(w => RAW_WORDS.has(w) || COOKED_WORDS.has(w) || w === 'rå');
 
 // Läser in egna livsmedel och recept från IndexedDB (anropas efter ändringar och import av backup).
 export async function reloadCustomFoods() {
@@ -207,7 +261,8 @@ const MIN_SCORE = 1.5;
 
 // Söker i alla livsmedel. boost: Map refKey → extra poäng (t.ex. för ofta valda livsmedel).
 // preferRecipe: texten nämner "matlåda" och syftar troligen på ett eget recept.
-export function search(query, { limit = 8, boost, preferRecipe = false } = {}) {
+// preferCooked: stor vikt utan "kokt"/"okokt" i texten, troligen vägd efter tillagning.
+export function search(query, { limit = 8, boost, preferRecipe = false, preferCooked = false } = {}) {
   const variants = queryVariants(query);
   if (!variants.length) return [];
   const results = [];
@@ -219,6 +274,11 @@ export function search(query, { limit = 8, boost, preferRecipe = false } = {}) {
     }
     if (best < MIN_SCORE) continue;
     if (boost?.has(food.key)) best += boost.get(food.key);
+    if (preferCooked && isStarch(food)) {
+      const st = cookingState(food.words);
+      if (st === 'cooked') best += 0.8;
+      else if (st === 'raw') best -= 0.8;
+    }
     if (food.ref.source === 'recipe') best += preferRecipe ? 2.5 : 1;
     else if (food.ref.source === 'custom') best += 0.3;
     else if (food.ref.source === 'base') best += 0.2;
@@ -257,11 +317,11 @@ export async function rememberChoice(query, ref) {
 
 // Tolkar vilket livsmedel en fritext avser.
 // Returnerar { candidates: [food], chosen: food|null, ambiguous: bool, remembered: bool }.
-export async function resolve(query, { preferRecipe = false } = {}) {
+export async function resolve(query, { preferRecipe = false, preferCooked = false } = {}) {
   const choices = await loadChoices();
   const key = normKey(query);
   const remembered = choices.find(c => c.key === key);
-  const results = search(query, { limit: 6, boost: usageBoost(choices), preferRecipe });
+  const results = search(query, { limit: 6, boost: usageBoost(choices), preferRecipe, preferCooked });
   const candidates = results.map(r => r.food);
 
   if (remembered) {
@@ -272,7 +332,10 @@ export async function resolve(query, { preferRecipe = false } = {}) {
     }
   }
   if (!results.length) return { candidates: [], chosen: null, ambiguous: false, remembered: false };
-  const clear = results.length === 1 || results[0].score - results[1].score >= 0.6;
+  // Varianter som bara skiljer sig på "m./u. salt" räknas som samma val.
+  const saltless = f => f.words.filter(w => !['m', 'u', 'salt'].includes(w)).join(' ');
+  const distinct = results.filter((r, i) => results.findIndex(x => saltless(x.food) === saltless(r.food)) === i);
+  const clear = distinct.length === 1 || distinct[0].score - distinct[1].score >= 0.6;
   return { candidates, chosen: clear ? results[0].food : null, ambiguous: !clear, remembered: false };
 }
 

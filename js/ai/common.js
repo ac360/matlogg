@@ -1,7 +1,7 @@
 // Delas av alla AI-leverantörer: feltyp, instruktioner och svarsschema.
 
 export class AiError extends Error {
-  // code: 'no-key' | 'auth' | 'rate-limit' | 'model' | 'network' | 'timeout' | 'unavailable' | 'bad-response'
+  // code: 'no-key' | 'auth' | 'rate-limit' | 'model' | 'network' | 'timeout' | 'unavailable' | 'internal' | 'invalid' | 'bad-response'
   constructor(code, message, detail) {
     super(message);
     this.code = code;
