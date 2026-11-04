@@ -4,7 +4,7 @@ import { esc, h, icons } from '../ui.js';
 import * as db from '../db.js';
 import { MEALS, sum, fmt, dateLabel, addDays, isoDate, amountText, defaultMeal } from '../nutrition.js';
 import { DEFAULT_GOALS, DEFAULT_WEEK_PLAN, WEEKDAYS, WEEKDAYS_SHORT, goalsForDate } from '../goals.js';
-import { weekSummary } from '../week.js';
+import { weekSummary, INCOMPLETE_KCAL } from '../week.js';
 import { weekdayIndex as weekdayOf } from '../goals.js';
 import { openLogSheet, openEditSheet } from './log.js';
 import { saveMeal } from '../recipes.js';
@@ -92,7 +92,7 @@ function weekCard(w, selected) {
         <h3>Veckan</h3>
         <span class="sub">${shortDate(w.start)}–${shortDate(w.end)} · ${w.loggedCount
           ? `snitt för ${w.loggedCount} ${w.loggedCount === 1 ? 'avslutad dag' : 'avslutade dagar'}`
-          : (w.containsToday ? 'snitt visas när en dag är avslutad' : 'inget loggat')}</span>
+          : (w.containsToday ? 'snitt visas när en dag är avslutad' : 'inget att räkna')}</span>
       </div>
       ${w.loggedCount ? `
         <div class="wk-stats">
@@ -100,13 +100,14 @@ function weekCard(w, selected) {
           ${avgRow('Protein', 'protein', 'g', 'protein')}
         </div>
         <div class="wk-small">Kolhydrater ${fmt(w.avg.carbs)} / ${fmt(w.avgGoal.carbs)} g · Fett ${fmt(w.avg.fat)} / ${fmt(w.avgGoal.fat)} g · Fiber ${fmt(w.avg.fiber, 1)} g</div>` : ''}
+      ${w.incompleteCount ? `<p class="wk-incomplete">${w.incompleteCount === 1 ? '1 dag' : `${w.incompleteCount} dagar`} under ${fmt(INCOMPLETE_KCAL)} kcal räknas inte (troligen inte fullt loggad).</p>` : ''}
       <div class="wk-days">
         ${w.days.map((d, i) => {
           const hGoal = (d.goal.kcal / maxGoal) * 100;
           const hEat = (d.totals.kcal / maxGoal) * 100;
           const over = d.totals.kcal > d.goal.kcal * 1.05;
-          return `<button type="button" class="wk-day ${d.date === selected ? 'sel' : ''} ${d.isToday ? 'today' : ''}" data-date="${d.date}"
-              aria-label="${WEEKDAYS[i]}: ${fmt(d.totals.kcal)} av ${fmt(d.goal.kcal)} kcal">
+          return `<button type="button" class="wk-day ${d.date === selected ? 'sel' : ''} ${d.isToday ? 'today' : ''} ${d.incomplete ? 'incomplete' : ''}" data-date="${d.date}"
+              aria-label="${WEEKDAYS[i]}: ${fmt(d.totals.kcal)} av ${fmt(d.goal.kcal)} kcal${d.incomplete ? ', räknas inte' : ''}">
             <span class="wk-col"><span class="wk-goal" style="height:${hGoal}%"></span><span class="wk-eat ${over ? 'over' : ''}" style="height:${hEat}%"></span></span>
             <span class="wk-dlabel">${WEEKDAYS_SHORT[i]}</span>
           </button>`;
