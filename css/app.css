@@ -535,3 +535,41 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .wk-balance { font-size: 13px; margin: 12px 0 0; color: var(--muted); }
 .wk-balance b { color: var(--text); }
 .wk-balance.over b { color: var(--danger); }
+
+/* ---------- Veckoplan med reglage ---------- */
+
+.wp { display: flex; flex-direction: column; gap: 4px; }
+.wp-row { padding: 8px 0; border-bottom: 0.5px solid var(--line); }
+.wp-top { display: flex; align-items: center; gap: 8px; }
+.wp-day { font-weight: 600; flex: 1; }
+.wp-val { font-variant-numeric: tabular-nums; font-size: 15px; color: var(--muted); }
+.wp-val b { color: var(--text); }
+.wp-row.locked .wp-val b { color: var(--accent); }
+.wp-lock {
+  width: 40px; height: 40px; border: 0; border-radius: 20px; background: transparent; color: var(--muted);
+  display: flex; align-items: center; justify-content: center; flex: none;
+}
+.wp-row.locked .wp-lock { color: var(--accent); background: var(--accent-soft); }
+.wp-lock svg { width: 20px; height: 20px; }
+.wp-macros { font-size: 12px; color: var(--muted); }
+.wp-sum { font-size: 14px; padding-top: 8px; }
+.wp-sum .warn { color: var(--danger); }
+
+.wp-range {
+  -webkit-appearance: none; appearance: none; width: 100%; height: 36px; margin: 2px 0; background: transparent;
+  --fill: 50%;
+}
+.wp-range::-webkit-slider-runnable-track {
+  height: 8px; border-radius: 4px;
+  background: linear-gradient(to right, var(--accent) var(--fill), var(--track) var(--fill));
+}
+.wp-row:not(.locked) .wp-range::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, color-mix(in srgb, var(--accent) 45%, var(--track)) var(--fill), var(--track) var(--fill));
+}
+.wp-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 28px; height: 28px; border-radius: 50%; margin-top: -10px;
+  background: #fff; border: 0.5px solid rgba(0, 0, 0, 0.1); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+.wp-range::-moz-range-track { height: 8px; border-radius: 4px; background: var(--track); }
+.wp-range::-moz-range-progress { height: 8px; border-radius: 4px; background: var(--accent); }
+.wp-range::-moz-range-thumb { width: 28px; height: 28px; border-radius: 50%; background: #fff; border: 0; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25); }
