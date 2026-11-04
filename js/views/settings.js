@@ -3,7 +3,9 @@
 import { esc, h, num, toast } from '../ui.js';
 import * as db from '../db.js';
 import * as foods from '../foods.js';
-import { ACTIVITY_LEVELS, GOAL_TYPES, DEFAULT_GOALS, suggestGoals } from '../goals.js';
+import {
+  ACTIVITY_LEVELS, GOAL_TYPES, DEFAULT_GOALS, DEFAULT_WEEK_PLAN, WEEKDAYS, suggestGoals, planKcal, checkPlan,
+} from '../goals.js';
 import { KEYS, LABELS, UNITS, fmtIn, isoDate } from '../nutrition.js';
 import { APP_VERSION } from '../version.js';
 import * as ai from '../ai/provider.js';
@@ -11,13 +13,15 @@ import * as ai from '../ai/provider.js';
 const DEFAULT_PROFILE = { sex: 'male', age: null, weight: null, height: null, activity: 'moderate', goal: 'leanbulk' };
 
 export async function renderSettings(main) {
-  const [profile, goals, lastBackup, persisted, aiCfg] = await Promise.all([
+  const [profile, goals, lastBackup, persisted, aiCfg, savedPlan] = await Promise.all([
     db.getSetting('profile', DEFAULT_PROFILE),
     db.getSetting('goals', DEFAULT_GOALS),
     db.getSetting('lastBackup'),
     navigator.storage?.persisted ? navigator.storage.persisted() : Promise.resolve(null),
     ai.getConfig(),
+    db.getSetting('weekPlan', DEFAULT_WEEK_PLAN),
   ]);
+  const plan = { ...DEFAULT_WEEK_PLAN, ...savedPlan, days: [...(savedPlan?.days || DEFAULT_WEEK_PLAN.days)] };
   const p = { ...DEFAULT_PROFILE, ...profile };
   const g = { ...DEFAULT_GOALS, ...goals };
   const meta = foods.getSlvMeta();
@@ -50,6 +54,21 @@ export async function renderSettings(main) {
         <div class="card form goals">
           ${KEYS.map(k => `<label class="field"><span>${LABELS[k]} (${UNITS[k]})</span><input name="${k}" type="text" inputmode="numeric" value="${fmtIn(g[k], 0)}"></label>`).join('')}
           <button type="button" class="btn primary save-goals">Spara mål</button>
+        </div>
+      </section>
+
+      <section>
+        <h2 class="section-title">Veckoplan</h2>
+        <div class="card form week-plan">
+          <label class="check"><input type="checkbox" name="plan-enabled" ${plan.enabled ? 'checked' : ''}> Olika kalorimål olika dagar</label>
+          <p class="hint">Veckans total är alltid 7 × dagsmålet. Skriv in kcal för de dagar du vill ändra, till exempel mer på lördag. Tomma dagar delar automatiskt på resten. Protein är samma varje dag.</p>
+          <div class="plan-days" ${plan.enabled ? '' : 'hidden'}>
+            ${WEEKDAYS.map((d, i) => `<label class="field"><span>${d}</span>
+              <input name="plan-${i}" type="text" inputmode="numeric" value="${plan.days[i] ? fmtIn(plan.days[i], 0) : ''}" placeholder="auto"></label>`).join('')}
+            <p class="hint plan-sum"></p>
+            <button type="button" class="btn-text plan-clear">Rensa alla dagar</button>
+          </div>
+          <button type="button" class="btn primary save-plan">Spara veckoplan</button>
         </div>
       </section>
 
@@ -136,6 +155,44 @@ export async function renderSettings(main) {
     await db.setSetting('goals', next);
     toast('Målen är sparade');
   });
+
+  // ---- Veckoplan ----
+  const planBox = main.querySelector('.plan-days');
+  const readPlan = () => ({
+    enabled: main.querySelector('[name="plan-enabled"]').checked,
+    days: WEEKDAYS.map((_, i) => {
+      const v = num(main.querySelector(`[name="plan-${i}"]`).value);
+      return v > 0 ? Math.round(v) : null;
+    }),
+  });
+  const baseKcal = () => num(main.querySelector('.goals [name="kcal"]').value) || g.kcal;
+  const refreshPlan = () => {
+    const p = readPlan();
+    planBox.hidden = !p.enabled;
+    const days = planKcal(baseKcal(), { ...p, enabled: true });
+    WEEKDAYS.forEach((_, i) => {
+      const inp = main.querySelector(`[name="plan-${i}"]`);
+      inp.placeholder = p.days[i] ? '' : `auto ${days[i]}`;
+    });
+    const warn = checkPlan(baseKcal(), { ...p, enabled: true });
+    main.querySelector('.plan-sum').textContent = warn
+      || `Veckototal ${days.reduce((s, v) => s + v, 0).toLocaleString('sv-SE')} kcal.`;
+  };
+  main.querySelector('[name="plan-enabled"]').addEventListener('change', refreshPlan);
+  main.querySelectorAll('.plan-days input').forEach(inp => inp.addEventListener('input', refreshPlan));
+  main.querySelector('.goals [name="kcal"]').addEventListener('input', refreshPlan);
+  main.querySelector('.plan-clear').addEventListener('click', () => {
+    main.querySelectorAll('.plan-days input').forEach(inp => { inp.value = ''; });
+    refreshPlan();
+  });
+  main.querySelector('.save-plan').addEventListener('click', async () => {
+    const p = readPlan();
+    const warn = p.enabled && checkPlan(baseKcal(), p);
+    if (warn) return toast(warn, { duration: 5000 });
+    await db.setSetting('weekPlan', p);
+    toast(p.enabled ? 'Veckoplanen är sparad' : 'Veckoplanen är avstängd');
+  });
+  refreshPlan();
 
   // ---- AI ----
   const keyInput = main.querySelector('[name="ai-key"]');

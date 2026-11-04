@@ -3,7 +3,9 @@
 import { esc, h, icons } from '../ui.js';
 import * as db from '../db.js';
 import { MEALS, sum, fmt, dateLabel, addDays, isoDate, amountText, defaultMeal } from '../nutrition.js';
-import { DEFAULT_GOALS } from '../goals.js';
+import { DEFAULT_GOALS, DEFAULT_WEEK_PLAN, WEEKDAYS, WEEKDAYS_SHORT, goalsForDate } from '../goals.js';
+import { weekSummary } from '../week.js';
+import { weekdayIndex as weekdayOf } from '../goals.js';
 import { openLogSheet, openEditSheet } from './log.js';
 import { saveMeal } from '../recipes.js';
 import { toast } from '../ui.js';
@@ -14,11 +16,18 @@ function bar(value, goal, cls) {
   return `<div class="bar ${cls} ${over ? 'over' : ''}"><span style="width:${pct}%"></span></div>`;
 }
 
-function summaryCard(t, goals) {
+function summaryCard(t, goals, date, week) {
   const left = goals.kcal - t.kcal;
   const protLeft = goals.protein - t.protein;
+  const notes = [];
+  if (goals.planned) notes.push(`${WEEKDAYS[weekdayOf(date)]}: ${goals.diff > 0 ? '+' : '−'}${fmt(Math.abs(goals.diff))} kcal enligt veckoplanen`);
+  if (date === isoDate() && week.adjustedToday != null && Math.abs(week.adjustedToday - goals.kcal) >= 50) {
+    notes.push(`För att hålla veckan: cirka ${fmt(week.adjustedToday)} kcal idag`);
+  }
+  const planNote = notes.map(n => `<div class="plan-note">${n}</div>`).join('');
   return `
     <section class="card summary">
+      ${planNote}
       <div class="sum-kcal">
         <div>
           <div class="big">${fmt(t.kcal)}</div>
@@ -52,6 +61,61 @@ function summaryCard(t, goals) {
     </section>`;
 }
 
+function shortDate(iso) {
+  const [, m, d] = iso.split('-').map(Number);
+  return `${d}/${m}`;
+}
+
+function weekCard(w, selected) {
+  const maxGoal = Math.max(...w.days.map(d => Math.max(d.goal.kcal, d.totals.kcal)), 1);
+  const avgRow = (label, key, unit, cls) => `
+    <div class="wk-stat ${cls}">
+      <span class="wk-label">${label}</span>
+      <span class="wk-val"><b>${fmt(w.avg[key])}</b> / ${fmt(w.avgGoal[key])} ${unit}</span>
+      ${bar(w.avg[key], w.avgGoal[key], cls)}
+    </div>`;
+
+  let balance = '';
+  if (w.containsToday && w.daysBefore) {
+    const over = w.balanceBefore > 0;
+    balance = `<p class="wk-balance ${over ? 'over' : ''}">
+      Hittills i veckan ${over ? 'över' : 'under'} planen med <b>${fmt(Math.abs(w.balanceBefore))} kcal</b>.
+      Sprids det ut på resten av veckan blir dagens mål cirka <b>${fmt(w.adjustedToday)} kcal</b>.</p>`;
+  } else if (!w.containsToday && w.loggedCount) {
+    const diff = w.consumed - w.target;
+    balance = `<p class="wk-balance">Veckan totalt: ${fmt(w.consumed)} av ${fmt(w.target)} kcal (${diff > 0 ? '+' : '−'}${fmt(Math.abs(diff))}).</p>`;
+  }
+
+  return `
+    <section class="card week">
+      <div class="wk-head">
+        <h3>Veckan</h3>
+        <span class="sub">${shortDate(w.start)}–${shortDate(w.end)} · ${w.loggedCount
+          ? `snitt för ${w.loggedCount} ${w.loggedCount === 1 ? 'avslutad dag' : 'avslutade dagar'}`
+          : (w.containsToday ? 'snitt visas när en dag är avslutad' : 'inget loggat')}</span>
+      </div>
+      ${w.loggedCount ? `
+        <div class="wk-stats">
+          ${avgRow('Energi', 'kcal', 'kcal', 'kcal')}
+          ${avgRow('Protein', 'protein', 'g', 'protein')}
+        </div>
+        <div class="wk-small">Kolhydrater ${fmt(w.avg.carbs)} / ${fmt(w.avgGoal.carbs)} g · Fett ${fmt(w.avg.fat)} / ${fmt(w.avgGoal.fat)} g · Fiber ${fmt(w.avg.fiber, 1)} g</div>` : ''}
+      <div class="wk-days">
+        ${w.days.map((d, i) => {
+          const hGoal = (d.goal.kcal / maxGoal) * 100;
+          const hEat = (d.totals.kcal / maxGoal) * 100;
+          const over = d.totals.kcal > d.goal.kcal * 1.05;
+          return `<button type="button" class="wk-day ${d.date === selected ? 'sel' : ''} ${d.isToday ? 'today' : ''}" data-date="${d.date}"
+              aria-label="${WEEKDAYS[i]}: ${fmt(d.totals.kcal)} av ${fmt(d.goal.kcal)} kcal">
+            <span class="wk-col"><span class="wk-goal" style="height:${hGoal}%"></span><span class="wk-eat ${over ? 'over' : ''}" style="height:${hEat}%"></span></span>
+            <span class="wk-dlabel">${WEEKDAYS_SHORT[i]}</span>
+          </button>`;
+        }).join('')}
+      </div>
+      ${balance}
+    </section>`;
+}
+
 function mealSection(meal, entries) {
   const t = sum(entries.map(e => e.nutrients));
   return `
@@ -79,10 +143,14 @@ function mealSection(meal, entries) {
 
 export async function renderDay(main, state) {
   const date = state.date;
-  const [entries, goals] = await Promise.all([
+  const [entries, savedGoals, plan] = await Promise.all([
     db.getByIndex('entries', 'date', date),
     db.getSetting('goals', DEFAULT_GOALS),
+    db.getSetting('weekPlan', DEFAULT_WEEK_PLAN),
   ]);
+  const baseGoals = { ...DEFAULT_GOALS, ...savedGoals };
+  const goals = goalsForDate(baseGoals, plan, date);
+  const week = await weekSummary(date, baseGoals, plan);
   entries.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const totals = sum(entries.map(e => e.nutrients));
   const byMeal = Object.fromEntries(MEALS.map(m => [m.id, entries.filter(e => e.meal === m.id)]));
@@ -99,8 +167,9 @@ export async function renderDay(main, state) {
     </header>
     <div class="content day">
       ${reminder}
-      ${summaryCard(totals, { ...DEFAULT_GOALS, ...goals })}
+      ${summaryCard(totals, goals, date, week)}
       ${MEALS.map(m => mealSection(m, byMeal[m.id])).join('')}
+      ${weekCard(week, date)}
       ${date !== isoDate() ? '<button type="button" class="btn-text to-today">Gå till idag</button>' : ''}
     </div>
     <div class="log-bar">
@@ -141,6 +210,7 @@ export async function renderDay(main, state) {
     toast(`Sparade ”${name.trim()}”. Den finns som knapp när du loggar.`, { duration: 4000 });
   }));
   main.querySelector('.backup-now')?.addEventListener('click', () => { location.hash = '#/installningar'; });
+  main.querySelectorAll('.wk-day').forEach(btn => btn.addEventListener('click', () => go(btn.dataset.date)));
 
   bindSwipe(main.querySelector('.content'), dir => go(addDays(date, dir)));
 }

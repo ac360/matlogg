@@ -501,3 +501,37 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   flex: 1; min-width: 0; min-height: 48px; border-radius: 12px; border: 0; padding: 0 14px;
   background: rgba(255, 255, 255, 0.92); color: #111; font-size: 17px;
 }
+
+/* ---------- Version 1.3: vecka och veckoplan ---------- */
+
+.plan-note {
+  display: table; font-size: 12px; font-weight: 600; color: var(--accent);
+  background: var(--accent-soft); border-radius: 6px; padding: 2px 8px; margin-bottom: 8px;
+}
+.week { margin-bottom: 18px; }
+.wk-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+.wk-head h3 { margin: 0; font-size: 20px; }
+.wk-head .sub { text-align: right; }
+.wk-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.wk-stat { display: flex; flex-direction: column; gap: 4px; }
+.wk-label { font-size: 13px; font-weight: 600; }
+.wk-stat.protein .wk-label { color: var(--protein); }
+.wk-val { font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.wk-val b { color: var(--text); font-size: 18px; }
+.wk-stat.protein .wk-val b { color: var(--protein); }
+.wk-small { font-size: 12px; color: var(--muted); margin-top: 10px; }
+.wk-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-top: 14px; }
+.wk-day {
+  background: none; border: 0; padding: 4px 0; border-radius: 8px;
+  display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 44px;
+}
+.wk-day.sel { background: var(--card-2); }
+.wk-col { position: relative; width: 60%; height: 64px; display: block; }
+.wk-goal { position: absolute; left: 0; right: 0; bottom: 0; border-radius: 4px; background: var(--track); }
+.wk-eat { position: absolute; left: 15%; right: 15%; bottom: 0; border-radius: 3px; background: var(--accent); }
+.wk-eat.over { background: var(--danger); }
+.wk-dlabel { font-size: 11px; color: var(--muted); font-weight: 500; }
+.wk-day.today .wk-dlabel { color: var(--accent); font-weight: 700; }
+.wk-balance { font-size: 13px; margin: 12px 0 0; color: var(--muted); }
+.wk-balance b { color: var(--text); }
+.wk-balance.over b { color: var(--danger); }

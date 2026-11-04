@@ -25,7 +25,8 @@ js/barcode.js, js/views/scanner.js        streckkodsskanning med kameran (zxing-
 js/ai/                                    AI-uppskattning: provider.js (utbytbart gränssnitt), gemini.js
 js/recipes.js                             sparade måltider och recept/matlådor
 js/portions.js                            gram per st/skiva/dl osv.
-js/goals.js                               målförslag (Mifflin-St Jeor)
+js/goals.js                               målförslag (Mifflin-St Jeor) och veckoplan per veckodag
+js/week.js                                veckosnitt och över/under veckoplanen
 js/views/                                 dagsvy, loggning, recept, inställningar
 data/livsmedel.json                       Livsmedelsverkets data (genereras)
 tools/import-slv.mjs                      hämtar databasen på nytt
