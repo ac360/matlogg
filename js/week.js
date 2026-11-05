@@ -12,11 +12,34 @@ export function weekStart(iso) {
   return addDays(iso, -weekdayIndex(iso));
 }
 
-export async function weekSummary(iso, baseGoals, plan) {
+// ISO-veckonummer (vecka 1 är veckan med årets första torsdag).
+export function isoWeek(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  return Math.ceil(((date - yearStart) / 86400000 + 1) / 7);
+}
+
+// Alla poster grupperade per datum, för att räkna många veckor med en enda läsning.
+export async function entriesByDate() {
+  const map = new Map();
+  for (const e of await db.getAll('entries')) {
+    if (!map.has(e.date)) map.set(e.date, []);
+    map.get(e.date).push(e);
+  }
+  return map;
+}
+
+// byDate: valfri Map från entriesByDate(); annars läses veckans dagar från databasen.
+export async function weekSummary(iso, baseGoals, plan, { byDate } = {}) {
   const start = weekStart(iso);
   const today = isoDate();
   const dates = Array.from({ length: 7 }, (_, i) => addDays(start, i));
-  const entriesPerDay = await Promise.all(dates.map(d => db.getByIndex('entries', 'date', d)));
+  const entriesPerDay = byDate
+    ? dates.map(d => byDate.get(d) || [])
+    : await Promise.all(dates.map(d => db.getByIndex('entries', 'date', d)));
 
   const days = dates.map((date, i) => {
     const entries = entriesPerDay[i];
@@ -57,8 +80,13 @@ export async function weekSummary(iso, baseGoals, plan) {
     ? Math.round(todayDay.goal.kcal - balanceBefore / daysLeftInclToday)
     : null;
 
+  // Följsamhet: dagar inom ±10 % av kalorimålet och dagar med minst 90 % av proteinmålet.
+  const withinKcal = logged.filter(d => Math.abs(d.totals.kcal - d.goal.kcal) <= d.goal.kcal * 0.1).length;
+  const proteinOk = logged.filter(d => d.totals.protein >= d.goal.protein * 0.9).length;
+
   return {
-    start, end: dates[6], days, avg, avgGoal, loggedCount: logged.length,
+    start, end: dates[6], week: isoWeek(start), days, avg, avgGoal, loggedCount: logged.length,
+    withinKcal, proteinOk,
     incompleteCount: days.filter(d => d.incomplete).length,
     target, consumed, containsToday, balanceBefore, daysBefore: before.length, daysLeftInclToday, adjustedToday,
   };

@@ -26,7 +26,8 @@ js/ai/                                    AI-uppskattning: provider.js (utbytbar
 js/recipes.js                             sparade måltider och recept/matlådor
 js/portions.js                            gram per st/skiva/dl osv.
 js/goals.js                               målförslag (Mifflin-St Jeor) och veckoplan per veckodag
-js/week.js                                veckosnitt och över/under veckoplanen
+js/week.js                                veckosnitt, över/under veckoplanen och veckohistorik
+js/views/overview.js                      fliken Översikt (vecka, trend för senaste veckorna)
 js/views/                                 dagsvy, loggning, recept, inställningar
 data/livsmedel.json                       Livsmedelsverkets data (genereras)
 tools/import-slv.mjs                      hämtar databasen på nytt

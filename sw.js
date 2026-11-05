@@ -2,7 +2,7 @@
 // Höj CACHE_VERSION (och APP_VERSION i js/version.js) vid varje publicering,
 // annars ser telefonen inte att det finns en ny version.
 
-const CACHE_VERSION = 'v1.3.2';
+const CACHE_VERSION = 'v1.4.0';
 const CACHE = `matlogg-${CACHE_VERSION}`;
 
 const ASSETS = [
@@ -31,7 +31,9 @@ const ASSETS = [
   'js/views/day.js',
   'js/views/item-editor.js',
   'js/views/items-list.js',
+  'js/views/bars.js',
   'js/views/log.js',
+  'js/views/overview.js',
   'js/views/recipes.js',
   'js/views/scanner.js',
   'js/views/settings.js',

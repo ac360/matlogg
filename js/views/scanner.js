@@ -75,10 +75,10 @@ export function openScanner({ onCode }) {
     if (code) onCode(code);
   }
 
-  // Avläsaren laddas parallellt med kameran.
+  // Avläsaren laddas parallellt med kameran (oftast redan förladdad när appen startade).
   const decoderReady = import('../barcode.js')
     .then(async d => { await d.initDecoder(); decoder = d; return d; })
-    .catch(err => { console.error(err); return null; });
+    .catch(err => { console.error(err); lastError = 'avläsaren laddades inte'; return null; });
 
   function diagnostics() {
     const track = stream?.getVideoTracks()[0];
@@ -100,20 +100,42 @@ export function openScanner({ onCode }) {
     diag.textContent = diagnostics();
   }
 
-  // Läser av mitten av bilden (där ramen är) några gånger per sekund.
+  // Läser av bilden några gånger per sekund. Växlar mellan mitten (där ramen är, full skärpa)
+  // och hela bilden (om streckkoden hamnat utanför ramen).
+  let loopRunning = false;
+  let frame = 0;
+  let lastPlayTry = 0;
+
+  function grab(full) {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    let sx = 0, sy = 0, sw = vw, sh = vh;
+    if (!full) {
+      sw = Math.round(vw * 0.9);
+      sh = Math.round(Math.min(vh, vw) * 0.6);
+      sx = (vw - sw) / 2;
+      sy = (vh - sh) / 2;
+    }
+    const scale = Math.min(1, 1280 / Math.max(sw, sh));
+    canvas.width = Math.round(sw * scale);
+    canvas.height = Math.round(sh * scale);
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+    return ctx.getImageData(0, 0, canvas.width, canvas.height);
+  }
+
   async function tick() {
-    if (!running) return;
+    if (!running) { loopRunning = false; return; }
+    // iPhone kan pausa videon efter behörighetsfrågan: starta den igen.
+    if (stream && video.paused && Date.now() - lastPlayTry > 1000) {
+      lastPlayTry = Date.now();
+      video.play().catch(() => {});
+    }
     if (decoder && !busy && video.readyState >= 2 && video.videoWidth) {
       busy = true;
       try {
-        const vw = video.videoWidth, vh = video.videoHeight;
-        const cw = Math.round(vw * 0.85), ch = Math.round(Math.min(vh, vw) * 0.5);
-        canvas.width = cw;
-        canvas.height = ch;
-        ctx.drawImage(video, (vw - cw) / 2, (vh - ch) / 2, cw, ch, 0, 0, cw, ch);
-        const code = await decoder.decode(ctx.getImageData(0, 0, cw, ch));
+        const code = await decoder.decode(grab(frame++ % 3 === 2));
         if (code) {
           navigator.vibrate?.(60);
+          loopRunning = false;
           return close(code);
         }
       } catch (err) {
@@ -122,7 +144,20 @@ export function openScanner({ onCode }) {
         busy = false;
       }
     }
-    setTimeout(tick, 120);
+    setTimeout(tick, 100);
+  }
+
+  function startLoop() {
+    if (loopRunning) return;
+    loopRunning = true;
+    tick();
+  }
+
+  // Högre upplösning och kontinuerlig fokus om kameran klarar det (ignoreras annars).
+  async function improveTrack(track) {
+    if (!track?.applyConstraints) return;
+    try { await track.applyConstraints({ width: { ideal: 1920 }, height: { ideal: 1080 } }); } catch {}
+    try { await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch {}
   }
 
   async function getStream() {
@@ -158,13 +193,15 @@ export function openScanner({ onCode }) {
       } catch (err) {
         lastError = `play: ${err.name}`;
       }
-      setStatus('Håll streckkoden inom ramen.');
-      // Om ingen bild kommit efter två sekunder: visa knappen för omstart.
+      improveTrack(stream.getVideoTracks()[0]);
+      setStatus(decoder ? 'Håll streckkoden inom ramen.' : 'Laddar streckkodsläsaren…');
+      decoderReady.then(d => { if (running && d && stream) setStatus('Håll streckkoden inom ramen.'); });
+      // Om ingen bild kommit efter tre sekunder: visa knappen för omstart.
       clearTimeout(watchdog);
       watchdog = setTimeout(() => {
         if (running && (!video.videoWidth || video.paused)) showNoPicture();
-      }, 2000);
-      tick();
+      }, 3000);
+      startLoop();
     } catch (err) {
       console.error(err);
       lastError = err.name;

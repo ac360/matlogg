@@ -47,6 +47,7 @@ export const MEALS = [
   { id: 'lunch', label: 'Lunch' },
   { id: 'middag', label: 'Middag' },
   { id: 'mellanmal', label: 'Mellanmål' },
+  { id: 'ovrigt', label: 'Övrigt' },
 ];
 
 export function defaultMeal(date = new Date()) {

@@ -11,7 +11,7 @@ import { openScanner } from './scanner.js';
 import { createItemsList } from './items-list.js';
 
 export function mealSegment(selected) {
-  return `<div class="segment" role="radiogroup" aria-label="Måltid">
+  return `<div class="segment meal-seg" role="radiogroup" aria-label="Måltid">
     ${MEALS.map(m => `<button type="button" role="radio" data-meal="${m.id}" aria-checked="${m.id === selected}">${m.label}</button>`).join('')}
   </div>`;
 }

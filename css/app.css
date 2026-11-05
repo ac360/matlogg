@@ -177,7 +177,16 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .sum-fiber { margin-top: 10px; font-size: 13px; color: var(--muted); }
 
 .meal { margin-bottom: 18px; }
-.meal-head { display: flex; justify-content: space-between; align-items: baseline; padding: 0 4px 6px; }
+.meal-head {
+  display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
+  background: none; border: 0; padding: 4px 4px 8px; min-height: 44px;
+}
+.meal-head h3 { flex: 1; }
+.chev-icon { display: flex; color: var(--muted); transition: transform 0.2s; transform: rotate(90deg); }
+.chev-icon svg { width: 18px; height: 18px; }
+.meal.collapsed .chev-icon { transform: rotate(0deg); }
+.meal.collapsed .meal-list { display: none; }
+.meal.collapsed { margin-bottom: 4px; }
 .meal-head h3 { margin: 0; font-size: 20px; font-weight: 700; }
 .meal-sum { color: var(--muted); font-size: 13px; }
 .meal-list { padding: 0; overflow: hidden; }
@@ -580,3 +589,25 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   opacity: 0.6;
 }
 .wk-day.incomplete .wk-dlabel { text-decoration: line-through; }
+
+/* ---------- Version 1.4 ---------- */
+.segment.meal-seg { grid-template-columns: repeat(5, 1fr); }
+.segment.meal-seg button { font-size: 13px; padding: 0 2px; }
+
+.week-link { display: block; text-align: center; text-decoration: none; margin: 4px auto 12px; }
+.icon-btn:disabled { opacity: 0.3; }
+.trends { margin-bottom: 18px; display: flex; flex-direction: column; gap: 14px; }
+.trends .sub-title { margin: 0; font-size: 18px; }
+.trend-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+.trend-label { font-weight: 600; font-size: 14px; }
+.trend-label.protein { color: var(--protein); }
+.trend-cols { display: grid; gap: 4px; }
+.trend-col { background: none; border: 0; padding: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.trend-val { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.trend-bar { position: relative; width: 70%; height: 72px; background: var(--card-2); border-radius: 4px; overflow: hidden; display: block; }
+.trend-fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--accent); border-radius: 3px; }
+.trend-fill.protein { background: var(--protein); }
+.trend-goal { position: absolute; left: 0; right: 0; height: 0; border-top: 2px dashed var(--text); opacity: 0.7; z-index: 1; }
+.trend-week { font-size: 11px; color: var(--muted); }
+.hist-row.sel { background: var(--card-2); }
+.hist-row .row-name .sub { font-weight: 400; margin-left: 4px; }

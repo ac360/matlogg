@@ -7,12 +7,14 @@ import { icons, toast } from './ui.js';
 import { renderDay } from './views/day.js';
 import { renderSettings } from './views/settings.js';
 import { renderRecipes } from './views/recipes.js';
+import { renderOverview } from './views/overview.js';
 
 const state = { date: isoDate() };
 
 // Vyer. Senare: '#/vikt', '#/traning'.
 const ROUTES = {
   '#/': { tab: 'day', render: main => renderDay(main, state) },
+  '#/oversikt': { tab: 'overview', render: main => renderOverview(main, state) },
   '#/recept': { tab: 'recipes', render: main => renderRecipes(main) },
   '#/installningar': { tab: 'settings', render: main => renderSettings(main) },
 };
@@ -23,6 +25,7 @@ function renderTabbar(active) {
   const nav = document.getElementById('tabbar');
   nav.innerHTML = `
     <a href="#/" class="${active === 'day' ? 'active' : ''}">${icons.day}<span>Dag</span></a>
+    <a href="#/oversikt" class="${active === 'overview' ? 'active' : ''}">${icons.chart}<span>Översikt</span></a>
     <a href="#/recept" class="${active === 'recipes' ? 'active' : ''}">${icons.book}<span>Recept</span></a>
     <a href="#/installningar" class="${active === 'settings' ? 'active' : ''}">${icons.settings}<span>Inställningar</span></a>`;
 }
@@ -93,6 +96,10 @@ async function start() {
   db.requestPersistence();
   window.addEventListener('hashchange', route);
   await route();
+  // Förladda streckkodsläsaren i bakgrunden (wasm ~1 MB), så att skanningen fungerar direkt.
+  setTimeout(() => {
+    import('./barcode.js').then(d => d.initDecoder()).catch(err => console.warn('Streckkodsläsaren:', err));
+  }, 1500);
 }
 
 start();
