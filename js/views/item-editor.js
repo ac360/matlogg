@@ -20,6 +20,7 @@ import { KEYS, LABELS, scale, scaleBy, sum, fmt, fmtIn } from '../nutrition.js';
 import { UNIT_LABELS, parseLine } from '../parser.js';
 
 const MASS_UNITS = { g: 1, hg: 100, kg: 1000 };
+const PHOTO_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z" /><circle cx="12" cy="13" r="3.5" /></svg>';
 
 // ---- Skapa tillstånd ----
 
@@ -204,7 +205,8 @@ export async function toEntryFields(item) {
     const totals = m.per100 ? scale(m.values, m.grams) : { ...m.values };
     let foodRef = item.savedFoodRef || null;
     if ((m.saveAsFood || m.barcode) && !foodRef) {
-      const units = {};
+      // Portion och förpackning från bilden, om de stod där.
+      const units = { ...(m.units || {}) };
       if (isPiece(item.parsedUnit) && item.parsedQty > 0) units[item.parsedUnit] = m.grams / item.parsedQty;
       // Skannad vara: mängden blir standardportion nästa gång (t.ex. en bar på 55 g).
       if (m.barcode) units.portion = m.grams;
@@ -212,7 +214,7 @@ export async function toEntryFields(item) {
         name: m.name.trim(),
         per100g,
         units,
-        source: 'manual',
+        source: m.fromPhoto ? 'label' : 'manual',
         barcode: m.barcode || undefined,
         aliases: item.query && item.query !== m.name.trim().toLowerCase() ? [item.query] : undefined,
       });
@@ -286,6 +288,7 @@ export function sourceBadge(food, estimated = false) {
   }
   if (food.origin === 'ai') return '<span class="badge badge-warn">Uppskattning (AI)</span>';
   if (food.origin === 'off') return '<span class="badge">Open Food Facts</span>';
+  if (food.origin === 'label') return '<span class="badge">Från förpackning</span>';
   return '<span class="badge">Eget livsmedel</span>';
 }
 
@@ -300,6 +303,7 @@ function sourceSuffix(food) {
   if (food.ref.source === 'recipe') return ' · recept';
   if (food.origin === 'ai') return ' · AI';
   if (food.origin === 'off') return food.brand ? ` · ${food.brand}` : ' · OFF';
+  if (food.origin === 'label') return ' · från förpackning';
   if (food.ref.source === 'custom') return ' · eget';
   return '';
 }
@@ -466,9 +470,17 @@ export function createItemEditor(item, { onChange = () => {}, onRemove, onSplit,
     const m = item.manual;
     return `
       <div class="manual">
-        ${m.hint ? `<p class="note">${esc(m.hint)}</p>` : ''}
+        ${m.hint && !m.fromPhoto ? `<p class="note">${esc(m.hint)}</p>` : ''}
+        ${m.reading
+          ? '<div class="ai-loading"><span class="spinner" aria-hidden="true"></span><span>Läser av förpackningen…</span></div>'
+          : `<label class="btn secondary m-photo">${PHOTO_ICON}<span>${m.fromPhoto ? 'Fota igen' : 'Fota näringsvärdet'}</span><input type="file" accept="image/*" capture="environment" hidden></label>`}
+        ${m.photoError ? `<p class="note error-note">${esc(m.photoError)}</p>` : ''}
+        ${m.fromPhoto ? `<p class="note">Avläst från bilden. Kontrollera värdena och fyll i hur mycket du åt.</p>
+          ${m.fromPhoto.warning ? `<p class="note warn">${esc(m.fromPhoto.warning)}</p>` : ''}
+          ${m.fromPhoto.notes ? `<p class="note">${esc(m.fromPhoto.notes)}</p>` : ''}` : ''}
         <label class="field"><span>Namn</span><input class="m-name" type="text" value="${esc(m.name)}" placeholder="t.ex. Proteinbar choklad"></label>
-        <label class="field"><span>Mängd (gram)</span><input class="m-grams" type="text" inputmode="decimal" value="${m.grams ? fmtIn(m.grams, 0) : ''}"></label>
+        <label class="field"><span>Mängd (gram)</span><input class="m-grams" type="text" inputmode="decimal" value="${m.grams ? fmtIn(m.grams, 0) : ''}" placeholder="${m.units?.portion ? `portion ${m.units.portion} g` : 'gram'}"></label>
+        ${m.units?.portion && !m.grams ? `<button type="button" class="btn-text m-use-portion">1 portion = ${fmt(m.units.portion)} g</button>` : ''}
         <div class="segment two m-basis" role="radiogroup" aria-label="Värdena gäller">
           <button type="button" role="radio" data-basis="per100" aria-checked="${!!m.per100}">Per 100 g</button>
           <button type="button" role="radio" data-basis="total" aria-checked="${!m.per100}">För hela mängden</button>
@@ -718,6 +730,41 @@ export function createItemEditor(item, { onChange = () => {}, onRemove, onSplit,
 
     if (item.mode === 'manual') {
       const m = item.manual;
+      el.querySelector('.m-photo input')?.addEventListener('change', async e => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (!file) return;
+        m.reading = true;
+        m.photoError = '';
+        render();
+        try {
+          const r = await ai.readLabel(file);
+          if (!m.name.trim()) m.name = [r.name, r.brand && !r.name.toLowerCase().includes(r.brand.toLowerCase()) ? `(${r.brand})` : '']
+            .filter(Boolean).join(' ') || 'Okänd produkt';
+          m.values = { ...r.per100g };
+          m.per100 = true;
+          m.units = {
+            ...(r.servingGrams ? { portion: r.servingGrams } : {}),
+            ...(r.packageGrams ? { förp: r.packageGrams } : {}),
+          };
+          m.fromPhoto = { warning: r.warning, notes: r.notes };
+          m.saveAsFood = true;
+        } catch (err) {
+          m.photoError = err.code === 'no-key'
+            ? 'Avläsning från bild kräver din Gemini-nyckel (Inställningar → AI). Skriv av värdena under tiden.'
+            : ai.errorText(err);
+        } finally {
+          m.reading = false;
+        }
+        render();
+        changed();
+        if (m.fromPhoto && !m.grams) el.querySelector('.m-grams')?.focus();
+      });
+      el.querySelector('.m-use-portion')?.addEventListener('click', () => {
+        m.grams = m.units.portion;
+        render();
+        changed();
+      });
       el.querySelector('.m-name').addEventListener('input', e => { m.name = e.target.value; });
       el.querySelector('.m-grams').addEventListener('input', e => { m.grams = num(e.target.value); });
       el.querySelector('.m-save')?.addEventListener('change', e => { m.saveAsFood = e.target.checked; });

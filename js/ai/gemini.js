@@ -1,6 +1,6 @@
 // Google Gemini via REST, direkt från webbläsaren. Nyckeln skickas i en header, aldrig i URL:en.
 
-import { AiError, SYSTEM_PROMPT, ESTIMATE_SCHEMA } from './common.js';
+import { AiError, SYSTEM_PROMPT, ESTIMATE_SCHEMA, LABEL_PROMPT, LABEL_SCHEMA, LABEL_FORMAT } from './common.js';
 
 export const label = 'Google Gemini';
 const BASE = 'https://generativelanguage.googleapis.com/v1beta';
@@ -96,14 +96,14 @@ function variants(model) {
   return v;
 }
 
-function buildBody(text, variant) {
+function buildBody({ system, parts, schema, format }, variant) {
   const generationConfig = { responseMimeType: 'application/json' };
-  if (variant.schema === 'json') generationConfig.responseJsonSchema = toJsonSchema(ESTIMATE_SCHEMA);
-  if (variant.schema === 'openapi') generationConfig.responseSchema = ESTIMATE_SCHEMA;
+  if (variant.schema === 'json') generationConfig.responseJsonSchema = toJsonSchema(schema);
+  if (variant.schema === 'openapi') generationConfig.responseSchema = schema;
   if (variant.thinking) generationConfig.thinkingConfig = variant.thinking;
   return {
-    systemInstruction: { parts: [{ text: SYSTEM_PROMPT + (variant.schema === 'none' ? PROMPT_FORMAT : '') }] },
-    contents: [{ role: 'user', parts: [{ text: `Det här har jag ätit: "${text}"` }] }],
+    systemInstruction: { parts: [{ text: system + (variant.schema === 'none' ? format : '') }] },
+    contents: [{ role: 'user', parts }],
     generationConfig,
   };
 }
@@ -116,13 +116,14 @@ function parseJson(textOut) {
   throw new Error('no json');
 }
 
-export async function estimate(text, { apiKey, model, signal }) {
+// Skickar en förfrågan och returnerar tolkad JSON. Provar enklare varianter om Google avvisar formatet.
+async function generateJson(request, { apiKey, model, signal }) {
   let lastErr;
   for (const variant of variants(model)) {
     let data;
     try {
       data = await call(`models/${encodeURIComponent(model)}:generateContent`, {
-        apiKey, method: 'POST', body: buildBody(text, variant), signal,
+        apiKey, method: 'POST', body: buildBody(request, variant), signal,
       });
     } catch (err) {
       lastErr = err;
@@ -144,4 +145,26 @@ export async function estimate(text, { apiKey, model, signal }) {
   }
   if (lastErr?.code === 'invalid') throw new AiError('invalid', 'Google avvisade AI-anropet.', lastErr.detail);
   throw lastErr;
+}
+
+export function estimate(text, opts) {
+  return generateJson({
+    system: SYSTEM_PROMPT,
+    parts: [{ text: `Det här har jag ätit: "${text}"` }],
+    schema: ESTIMATE_SCHEMA,
+    format: PROMPT_FORMAT,
+  }, opts);
+}
+
+// image: { mime, data } där data är base64 utan prefix.
+export function readLabel(image, opts) {
+  return generateJson({
+    system: LABEL_PROMPT,
+    parts: [
+      { inlineData: { mimeType: image.mime, data: image.data } },
+      { text: 'Läs av näringsvärdet på förpackningen.' },
+    ],
+    schema: LABEL_SCHEMA,
+    format: LABEL_FORMAT,
+  }, opts);
 }

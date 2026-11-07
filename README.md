@@ -22,7 +22,8 @@ js/foods.js                               livsmedelsregister, sökning, ihågkom
 js/basfoods.js                            baslista: vanliga produkter som saknas hos Livsmedelsverket
 js/off.js                                 Open Food Facts (märkesvaror och streckkoder)
 js/barcode.js, js/views/scanner.js        streckkodsskanning med kameran (zxing-wasm i vendor/zxing, MIT)
-js/ai/                                    AI-uppskattning: provider.js (utbytbart gränssnitt), gemini.js
+js/ai/                                    AI: provider.js (utbytbart gränssnitt), gemini.js, image.js
+                                          (fritext → uppskattning, foto av näringsdeklaration → värden per 100 g)
 js/recipes.js                             sparade måltider och recept/matlådor
 js/portions.js                            gram per st/skiva/dl osv.
 js/goals.js                               målförslag (Mifflin-St Jeor) och veckoplan per veckodag
